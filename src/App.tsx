@@ -1,7 +1,9 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { useState } from "react";
+import { BrowserRouter, Routes, Route, Outlet } from "react-router-dom";
 import { AuthProvider } from "./context/AuthContext";
 import ProtectedRoute from "./components/ProtectedRoute";
 import Nav from "./components/Nav";
+import ChatPanel from "./components/ChatPanel";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
 import Dashboard from "./pages/Dashboard";
@@ -13,21 +15,21 @@ import WorkoutForm from "./pages/WorkoutForm";
 import WorkoutDetail from "./pages/WorkoutDetail";
 import Group from "./pages/Group";
 import Profile from "./pages/Profile";
-import Chat from "./pages/Chat";
 
-function AppLayout({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="app-shell" style={{ flexDirection: "column" }}>
-      <Nav />
-      <main className="app-main">{children}</main>
-    </div>
-  );
-}
-
-function Protected({ children }: { children: React.ReactNode }) {
+// One layout instance wraps every authenticated route via <Outlet/>, so Nav
+// and ChatPanel stay mounted (and the chat's realtime subscription stays
+// connected) across navigation instead of remounting per page.
+function AppLayout() {
+  const [chatOpen, setChatOpen] = useState(false);
   return (
     <ProtectedRoute>
-      <AppLayout>{children}</AppLayout>
+      <div className="app-shell" style={{ flexDirection: "column" }}>
+        <Nav chatOpen={chatOpen} onToggleChat={() => setChatOpen((v) => !v)} />
+        <main className="app-main">
+          <Outlet />
+        </main>
+        <ChatPanel open={chatOpen} onClose={() => setChatOpen(false)} />
+      </div>
     </ProtectedRoute>
   );
 }
@@ -39,18 +41,19 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Signup />} />
-          <Route path="/" element={<Protected><Dashboard /></Protected>} />
-          <Route path="/exercises" element={<Protected><Exercises /></Protected>} />
-          <Route path="/exercises/new" element={<Protected><ExerciseForm /></Protected>} />
-          <Route path="/exercises/:id" element={<Protected><ExerciseDetail /></Protected>} />
-          <Route path="/exercises/:id/edit" element={<Protected><ExerciseForm /></Protected>} />
-          <Route path="/workouts" element={<Protected><Workouts /></Protected>} />
-          <Route path="/workouts/new" element={<Protected><WorkoutForm /></Protected>} />
-          <Route path="/workouts/:id" element={<Protected><WorkoutDetail /></Protected>} />
-          <Route path="/workouts/:id/edit" element={<Protected><WorkoutForm /></Protected>} />
-          <Route path="/group" element={<Protected><Group /></Protected>} />
-          <Route path="/chat" element={<Protected><Chat /></Protected>} />
-          <Route path="/profile" element={<Protected><Profile /></Protected>} />
+          <Route element={<AppLayout />}>
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/exercises" element={<Exercises />} />
+            <Route path="/exercises/new" element={<ExerciseForm />} />
+            <Route path="/exercises/:id" element={<ExerciseDetail />} />
+            <Route path="/exercises/:id/edit" element={<ExerciseForm />} />
+            <Route path="/workouts" element={<Workouts />} />
+            <Route path="/workouts/new" element={<WorkoutForm />} />
+            <Route path="/workouts/:id" element={<WorkoutDetail />} />
+            <Route path="/workouts/:id/edit" element={<WorkoutForm />} />
+            <Route path="/group" element={<Group />} />
+            <Route path="/profile" element={<Profile />} />
+          </Route>
         </Routes>
       </BrowserRouter>
     </AuthProvider>

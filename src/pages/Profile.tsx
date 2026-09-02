@@ -1,22 +1,37 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { supabase } from "../lib/supabaseClient";
 import { useAuth } from "../context/AuthContext";
+import { useConnections } from "../hooks/useConnections";
+import ConnectionActions from "../components/ConnectionActions";
 import { formatDate, relativeTime } from "../lib/format";
-import type { BodyWeightLog, Connection, Profile as ProfileType } from "../types/database";
+import type { BodyWeightLog } from "../types/database";
 
-type RowStatus = "self" | "accepted" | "incoming_pending" | "outgoing_pending" | "rejected" | "none";
+const STATUS_PRIORITY = {
+  incoming_pending: 0,
+  accepted: 1,
+  outgoing_pending: 2,
+  rejected: 3,
+  none: 4,
+} as const;
 
 export default function Profile() {
   const { user, profile } = useAuth();
   const [logs, setLogs] = useState<BodyWeightLog[]>([]);
-  const [profiles, setProfiles] = useState<ProfileType[]>([]);
-  const [connections, setConnections] = useState<Connection[]>([]);
   const [weight, setWeight] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [connectionError, setConnectionError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [busyId, setBusyId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const {
+    rows,
+    loading: connectionsLoading,
+    error: connectionError,
+    busyId,
+    requestAccess,
+    respond,
+    removeConnection,
+    requestAgain,
+  } = useConnections();
 
   async function loadLogs() {
     if (!user) return;
@@ -28,26 +43,9 @@ export default function Profile() {
     setLogs(data ?? []);
   }
 
-  async function loadConnections() {
-    if (!user) return;
-    const { data } = await supabase
-      .from("connections")
-      .select("*")
-      .or(`requester_id.eq.${user.id},addressee_id.eq.${user.id}`);
-    setConnections(data ?? []);
-  }
-
   useEffect(() => {
     if (!user) return;
-    Promise.all([
-      loadLogs(),
-      loadConnections(),
-      supabase
-        .from("profiles")
-        .select("*")
-        .order("last_seen", { ascending: false })
-        .then(({ data }) => setProfiles(data ?? [])),
-    ]).then(() => setLoading(false));
+    loadLogs().then(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
@@ -68,90 +66,7 @@ export default function Profile() {
     loadLogs();
   }
 
-  // One row per other person, with whatever connection (if any) links us —
-  // in either direction, since a request can come from either side.
-  const rows = useMemo(() => {
-    if (!user) return [];
-    return profiles
-      .filter((p) => p.id !== user.id)
-      .map((p) => {
-        const connection = connections.find(
-          (c) =>
-            (c.requester_id === user.id && c.addressee_id === p.id) ||
-            (c.addressee_id === user.id && c.requester_id === p.id)
-        );
-        let status: RowStatus = "none";
-        if (connection) {
-          if (connection.status === "accepted") status = "accepted";
-          else if (connection.status === "rejected") status = "rejected";
-          else status = connection.requester_id === user.id ? "outgoing_pending" : "incoming_pending";
-        }
-        return { profile: p, connection, status };
-      })
-      .sort((a, b) => {
-        const priority: Record<RowStatus, number> = {
-          incoming_pending: 0,
-          accepted: 1,
-          outgoing_pending: 2,
-          rejected: 3,
-          none: 4,
-          self: 5,
-        };
-        return priority[a.status] - priority[b.status];
-      });
-  }, [profiles, connections, user]);
-
-  async function withBusy(id: string, fn: () => Promise<void>) {
-    setBusyId(id);
-    setConnectionError(null);
-    try {
-      await fn();
-      await loadConnections();
-    } catch (err) {
-      setConnectionError(err instanceof Error ? err.message : "Something went wrong.");
-    } finally {
-      setBusyId(null);
-    }
-  }
-
-  function requestAccess(otherId: string) {
-    if (!user) return;
-    withBusy(otherId, async () => {
-      const { error } = await supabase
-        .from("connections")
-        .insert({ requester_id: user.id, addressee_id: otherId, status: "pending" });
-      if (error) throw error;
-    });
-  }
-
-  function respond(connectionId: string, status: "accepted" | "rejected") {
-    withBusy(connectionId, async () => {
-      const { error } = await supabase
-        .from("connections")
-        .update({ status, responded_at: new Date().toISOString() })
-        .eq("id", connectionId);
-      if (error) throw error;
-    });
-  }
-
-  function removeConnection(connectionId: string) {
-    withBusy(connectionId, async () => {
-      const { error } = await supabase.from("connections").delete().eq("id", connectionId);
-      if (error) throw error;
-    });
-  }
-
-  function requestAgain(connectionId: string, otherId: string) {
-    if (!user) return;
-    withBusy(connectionId, async () => {
-      const { error: deleteError } = await supabase.from("connections").delete().eq("id", connectionId);
-      if (deleteError) throw deleteError;
-      const { error: insertError } = await supabase
-        .from("connections")
-        .insert({ requester_id: user.id, addressee_id: otherId, status: "pending" });
-      if (insertError) throw insertError;
-    });
-  }
+  const sortedRows = [...rows].sort((a, b) => STATUS_PRIORITY[a.status] - STATUS_PRIORITY[b.status]);
 
   return (
     <div>
@@ -203,71 +118,42 @@ export default function Profile() {
         <h3>Group</h3>
         <p className="muted" style={{ marginTop: -6, marginBottom: 14 }}>
           Everyone's name is visible, but workouts and body weight stay private until you two connect —
-          request access below, or accept a request someone sent you.
+          request access below, or accept a request someone sent you. You can also do this from the chat
+          panel's online list.
         </p>
         {connectionError && <p className="error-text">{connectionError}</p>}
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Last seen</th>
-              <th>Access</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map(({ profile: p, connection, status }) => {
-              const busy = busyId === p.id || (connection != null && busyId === connection.id);
-              return (
-                <tr key={p.id}>
-                  <td>{p.name}</td>
-                  <td className="muted">{relativeTime(p.last_seen)}</td>
+        {connectionsLoading ? (
+          <p className="muted">Loading…</p>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Last seen</th>
+                <th>Access</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedRows.map((row) => (
+                <tr key={row.profile.id}>
+                  <td>{row.profile.name}</td>
+                  <td className="muted">{relativeTime(row.profile.last_seen)}</td>
                   <td>
-                    {status === "none" && (
-                      <button type="button" disabled={busy} onClick={() => requestAccess(p.id)}>
-                        {busy ? "…" : "Request access"}
-                      </button>
-                    )}
-                    {status === "outgoing_pending" && connection && (
-                      <div className="row" style={{ gap: 8 }}>
-                        <span className="chip">Pending</span>
-                        <button type="button" className="ghost" disabled={busy} onClick={() => removeConnection(connection.id)}>
-                          Cancel
-                        </button>
-                      </div>
-                    )}
-                    {status === "incoming_pending" && connection && (
-                      <div className="row" style={{ gap: 8 }}>
-                        <span className="chip focus">Wants access</span>
-                        <button type="button" className="primary" disabled={busy} onClick={() => respond(connection.id, "accepted")}>
-                          Accept
-                        </button>
-                        <button type="button" className="ghost" disabled={busy} onClick={() => respond(connection.id, "rejected")}>
-                          Reject
-                        </button>
-                      </div>
-                    )}
-                    {status === "accepted" && connection && (
-                      <div className="row" style={{ gap: 8 }}>
-                        <span className="chip focus">Connected</span>
-                        <button type="button" className="ghost" disabled={busy} onClick={() => removeConnection(connection.id)}>
-                          Remove
-                        </button>
-                      </div>
-                    )}
-                    {status === "rejected" && connection && (
-                      <div className="row" style={{ gap: 8 }}>
-                        <span className="muted">Rejected</span>
-                        <button type="button" className="ghost" disabled={busy} onClick={() => requestAgain(connection.id, p.id)}>
-                          Request again
-                        </button>
-                      </div>
-                    )}
+                    <ConnectionActions
+                      row={row}
+                      busy={busyId === row.profile.id || busyId === row.connection?.id}
+                      onRequest={requestAccess}
+                      onAccept={(id) => respond(id, "accepted")}
+                      onReject={(id) => respond(id, "rejected")}
+                      onRemove={removeConnection}
+                      onRequestAgain={requestAgain}
+                    />
                   </td>
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   );
