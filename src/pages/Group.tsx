@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   ResponsiveContainer,
   LineChart,
@@ -158,7 +159,13 @@ export default function Group() {
   }, [exerciseOptions, selectedExercise]);
 
   if (loading) return <p className="muted">Loading…</p>;
-  if (enriched.length === 0) return <p className="muted">No workouts logged yet — nothing to compare.</p>;
+  if (enriched.length === 0)
+    return (
+      <p className="muted">
+        Nothing to compare yet — either no workouts logged, or you're not connected with anyone. Head to{" "}
+        <Link to="/profile">Profile</Link> to request access to a friend's data.
+      </p>
+    );
 
   return (
     <div className="stack" style={{ gap: 16 }}>

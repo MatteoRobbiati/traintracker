@@ -141,24 +141,88 @@ $$;
 grant execute on function public.touch_last_seen() to authenticated;
 
 -- ============================================================================
--- Row Level Security — everyone in the group reads everything; writes are
--- scoped to the owning user (exercises: scoped to the creator).
+-- connections — access requests between users. Anyone can request to see
+-- someone else's personal data (workouts/sets/body weight); the addressee
+-- must accept or reject. Once accepted, visibility is mutual. Names and the
+-- exercise library stay visible to everyone regardless (see RLS below) —
+-- this only gates personal training data.
+-- ============================================================================
+create table public.connections (
+  id            uuid primary key default gen_random_uuid(),
+  requester_id  uuid not null references public.profiles(id) on delete cascade,
+  addressee_id  uuid not null references public.profiles(id) on delete cascade,
+  status        text not null default 'pending' check (status in ('pending', 'accepted', 'rejected')),
+  created_at    timestamptz not null default now(),
+  responded_at  timestamptz,
+
+  constraint connections_not_self check (requester_id <> addressee_id),
+  constraint connections_unique_pair unique (requester_id, addressee_id)
+);
+
+create index connections_addressee_idx on public.connections (addressee_id, status);
+create index connections_requester_idx on public.connections (requester_id, status);
+
+-- is_connected(target_id) — true if the current user IS target_id, or there's
+-- an accepted connection between them in either direction. Used by RLS below.
+create function public.is_connected(target_id uuid)
+returns boolean
+language sql
+stable
+security definer set search_path = public
+as $$
+  select target_id = auth.uid()
+    or exists (
+      select 1 from public.connections
+      where status = 'accepted'
+        and ((requester_id = auth.uid() and addressee_id = target_id)
+          or (addressee_id = auth.uid() and requester_id = target_id))
+    );
+$$;
+
+grant execute on function public.is_connected(uuid) to authenticated;
+
+-- ============================================================================
+-- messages — a single group chat room, visible to everyone with an account
+-- (like the exercise library, not gated by connections). "Online now" is
+-- handled separately, client-side, via Supabase Realtime Presence — it isn't
+-- backed by a table.
+-- ============================================================================
+create table public.messages (
+  id          uuid primary key default gen_random_uuid(),
+  sender_id   uuid not null references public.profiles(id) on delete cascade,
+  body        text not null check (char_length(btrim(body)) > 0 and char_length(body) <= 2000),
+  created_at  timestamptz not null default now()
+);
+
+create index messages_created_at_idx on public.messages (created_at);
+
+-- Stream inserts to subscribed clients in realtime.
+alter publication supabase_realtime add table public.messages;
+
+-- ============================================================================
+-- Row Level Security — names and the exercise library are visible to
+-- everyone; personal training data (workouts/sets/body weight) is visible
+-- only to its owner and to users with an accepted connection. Writes are
+-- always scoped to the owning user (exercises: scoped to the creator).
 -- ============================================================================
 alter table public.profiles         enable row level security;
 alter table public.body_weight_logs enable row level security;
 alter table public.exercises        enable row level security;
 alter table public.workouts         enable row level security;
 alter table public.sets             enable row level security;
+alter table public.connections      enable row level security;
+alter table public.messages         enable row level security;
 
--- profiles
+-- profiles (names + last_seen stay visible to everyone so people can find
+-- who to send a connection request to)
 create policy "profiles_select_all" on public.profiles
   for select to authenticated using (true);
 create policy "profiles_update_own" on public.profiles
   for update to authenticated using (id = auth.uid());
 
--- body_weight_logs
-create policy "weight_logs_select_all" on public.body_weight_logs
-  for select to authenticated using (true);
+-- body_weight_logs — gated by connection
+create policy "weight_logs_select_own_or_connected" on public.body_weight_logs
+  for select to authenticated using (public.is_connected(user_id));
 create policy "weight_logs_insert_own" on public.body_weight_logs
   for insert to authenticated with check (user_id = auth.uid());
 create policy "weight_logs_update_own" on public.body_weight_logs
@@ -176,9 +240,9 @@ create policy "exercises_update_own" on public.exercises
 create policy "exercises_delete_own" on public.exercises
   for delete to authenticated using (created_by = auth.uid());
 
--- workouts
-create policy "workouts_select_all" on public.workouts
-  for select to authenticated using (true);
+-- workouts — gated by connection
+create policy "workouts_select_own_or_connected" on public.workouts
+  for select to authenticated using (public.is_connected(user_id));
 create policy "workouts_insert_own" on public.workouts
   for insert to authenticated with check (user_id = auth.uid());
 create policy "workouts_update_own" on public.workouts
@@ -186,9 +250,11 @@ create policy "workouts_update_own" on public.workouts
 create policy "workouts_delete_own" on public.workouts
   for delete to authenticated using (user_id = auth.uid());
 
--- sets (ownership follows the parent workout)
-create policy "sets_select_all" on public.sets
-  for select to authenticated using (true);
+-- sets (ownership/visibility follows the parent workout)
+create policy "sets_select_own_or_connected" on public.sets
+  for select to authenticated using (
+    exists (select 1 from public.workouts w where w.id = workout_id and public.is_connected(w.user_id))
+  );
 create policy "sets_insert_own" on public.sets
   for insert to authenticated with check (
     exists (select 1 from public.workouts w where w.id = workout_id and w.user_id = auth.uid())
@@ -201,3 +267,23 @@ create policy "sets_delete_own" on public.sets
   for delete to authenticated using (
     exists (select 1 from public.workouts w where w.id = workout_id and w.user_id = auth.uid())
   );
+
+-- connections — each side sees only requests they're part of; the requester
+-- creates it, only the addressee can accept/reject, either side can remove
+-- it (which also allows re-requesting after a rejection).
+create policy "connections_select_participant" on public.connections
+  for select to authenticated using (requester_id = auth.uid() or addressee_id = auth.uid());
+create policy "connections_insert_own" on public.connections
+  for insert to authenticated with check (requester_id = auth.uid());
+create policy "connections_update_addressee" on public.connections
+  for update to authenticated using (addressee_id = auth.uid());
+create policy "connections_delete_participant" on public.connections
+  for delete to authenticated using (requester_id = auth.uid() or addressee_id = auth.uid());
+
+-- messages (single group room: everyone reads everything, writes/deletes own)
+create policy "messages_select_all" on public.messages
+  for select to authenticated using (true);
+create policy "messages_insert_own" on public.messages
+  for insert to authenticated with check (sender_id = auth.uid());
+create policy "messages_delete_own" on public.messages
+  for delete to authenticated using (sender_id = auth.uid());

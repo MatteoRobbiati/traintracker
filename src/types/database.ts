@@ -52,6 +52,24 @@ export type WorkoutSet = {
   set_order: number;
 };
 
+export type ConnectionStatus = "pending" | "accepted" | "rejected";
+
+export type Connection = {
+  id: string;
+  requester_id: string;
+  addressee_id: string;
+  status: ConnectionStatus;
+  created_at: string;
+  responded_at: string | null;
+};
+
+export type Message = {
+  id: string;
+  sender_id: string;
+  body: string;
+  created_at: string;
+};
+
 type Table<Row, Insert, Update = Partial<Insert>> = {
   Row: Row;
   Insert: Insert;
@@ -73,12 +91,21 @@ export type Database = {
         WorkoutSet,
         Pick<WorkoutSet, "workout_id" | "exercise_id" | "reps"> & Partial<WorkoutSet>
       >;
+      connections: Table<
+        Connection,
+        Pick<Connection, "requester_id" | "addressee_id"> & Partial<Connection>
+      >;
+      messages: Table<Message, Pick<Message, "sender_id" | "body"> & Partial<Message>>;
     };
     Views: Record<string, never>;
     Functions: {
       touch_last_seen: {
         Args: Record<string, never>;
         Returns: void;
+      };
+      is_connected: {
+        Args: { target_id: string };
+        Returns: boolean;
       };
     };
   };

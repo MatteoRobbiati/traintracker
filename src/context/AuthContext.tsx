@@ -18,6 +18,8 @@ interface AuthContextValue {
   signUp: (email: string, password: string, name: string) => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
+  /** userId -> name, for everyone currently connected via the presence channel. */
+  onlineUsers: Record<string, string>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -26,6 +28,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [onlineUsers, setOnlineUsers] = useState<Record<string, string>>({});
 
   async function loadProfile(userId: string) {
     const { data } = await supabase.from("profiles").select("*").eq("id", userId).single();
@@ -62,6 +65,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(interval);
   }, [session]);
 
+  // Presence: join a single lobby channel so everyone can see who else is
+  // online right now. This is Realtime Presence (ephemeral, socket-based) —
+  // nothing is written to the database for it.
+  const userId = session?.user.id;
+  const userName = profile?.name;
+  useEffect(() => {
+    if (!userId || !userName) return;
+    const channel = supabase.channel("presence-lobby", {
+      config: { presence: { key: userId } },
+    });
+
+    channel.on("presence", { event: "sync" }, () => {
+      const state = channel.presenceState<{ name: string }>();
+      const next: Record<string, string> = {};
+      for (const key of Object.keys(state)) {
+        const first = state[key][0];
+        if (first) next[key] = first.name;
+      }
+      setOnlineUsers(next);
+    });
+
+    channel.subscribe((status) => {
+      if (status === "SUBSCRIBED") channel.track({ name: userName });
+    });
+
+    return () => {
+      supabase.removeChannel(channel);
+      setOnlineUsers({});
+    };
+  }, [userId, userName]);
+
   async function signIn(email: string, password: string) {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     return { error: error?.message ?? null };
@@ -95,6 +129,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         signUp,
         signOut,
         refreshProfile,
+        onlineUsers,
       }}
     >
       {children}

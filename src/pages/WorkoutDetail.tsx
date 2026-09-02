@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
 import { useAuth } from "../context/AuthContext";
 import { formatDate, setVolume } from "../lib/format";
@@ -149,6 +149,9 @@ export default function WorkoutDetail() {
 
       {isOwner && (
         <div className="row" style={{ marginTop: 16 }}>
+          <Link to={`/workouts/${workout.id}/edit`}>
+            <button type="button">Edit</button>
+          </Link>
           <button type="button" className="danger" onClick={handleDelete} disabled={deleting}>
             {deleting ? "Deleting…" : "Delete workout"}
           </button>

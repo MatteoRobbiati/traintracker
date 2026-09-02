@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
 import { useAuth } from "../context/AuthContext";
 import { setVolume } from "../lib/format";
@@ -27,6 +27,8 @@ function emptySet(): SetRow {
 }
 
 export default function WorkoutForm() {
+  const { id } = useParams();
+  const isEdit = Boolean(id);
   const { user } = useAuth();
   const navigate = useNavigate();
 
@@ -40,6 +42,7 @@ export default function WorkoutForm() {
   const [blocks, setBlocks] = useState<ExerciseBlock[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [loading, setLoading] = useState(isEdit);
 
   useEffect(() => {
     if (!user) return;
@@ -57,6 +60,42 @@ export default function WorkoutForm() {
       .maybeSingle()
       .then(({ data }) => setBodyWeightKg(data?.weight_kg ?? null));
   }, [user]);
+
+  // Load the existing workout + sets when editing, and reconstruct the
+  // exercise "blocks" by grouping consecutive same-exercise sets in
+  // set_order (that's how they were originally laid out when saved).
+  useEffect(() => {
+    if (!id) return;
+    async function load() {
+      const [{ data: w }, { data: s }] = await Promise.all([
+        supabase.from("workouts").select("*").eq("id", id!).single(),
+        supabase.from("sets").select("*").eq("workout_id", id!).order("set_order"),
+      ]);
+      if (w) {
+        setDate(w.date);
+        setWarmup(w.warmup ?? "");
+        setNotes(w.notes ?? "");
+        setDuration(w.duration_minutes != null ? String(w.duration_minutes) : "");
+      }
+      const loadedBlocks: ExerciseBlock[] = [];
+      for (const row of s ?? []) {
+        const last = loadedBlocks[loadedBlocks.length - 1];
+        const set: SetRow = {
+          weight: String(row.weight),
+          reps: String(row.reps),
+          restSeconds: row.rest_time_seconds != null ? String(row.rest_time_seconds) : "",
+        };
+        if (last && last.exerciseId === row.exercise_id) {
+          last.sets.push(set);
+        } else {
+          loadedBlocks.push({ key: crypto.randomUUID(), exerciseId: row.exercise_id, sets: [set] });
+        }
+      }
+      setBlocks(loadedBlocks);
+      setLoading(false);
+    }
+    load();
+  }, [id]);
 
   function addBlock() {
     if (exerciseOptions.length === 0) return;
@@ -102,27 +141,46 @@ export default function WorkoutForm() {
     setSubmitting(true);
     setError(null);
 
-    const { data: workout, error: workoutError } = await supabase
-      .from("workouts")
-      .insert({
-        user_id: user.id,
-        date,
-        warmup: warmup.trim() || null,
-        notes: notes.trim() || null,
-        duration_minutes: duration ? Number(duration) : null,
-      })
-      .select()
-      .single();
+    const workoutPayload = {
+      date,
+      warmup: warmup.trim() || null,
+      notes: notes.trim() || null,
+      duration_minutes: duration ? Number(duration) : null,
+    };
 
-    if (workoutError || !workout) {
-      setError(workoutError?.message ?? "Failed to create workout.");
-      setSubmitting(false);
-      return;
+    let workoutId = id;
+    if (isEdit) {
+      const { error: updateError } = await supabase.from("workouts").update(workoutPayload).eq("id", id!);
+      if (updateError) {
+        setError(updateError.message);
+        setSubmitting(false);
+        return;
+      }
+      // Simplest consistent way to persist edited sets: replace them all
+      // rather than diffing add/remove/reorder client-side.
+      const { error: deleteError } = await supabase.from("sets").delete().eq("workout_id", id!);
+      if (deleteError) {
+        setError(deleteError.message);
+        setSubmitting(false);
+        return;
+      }
+    } else {
+      const { data: workout, error: workoutError } = await supabase
+        .from("workouts")
+        .insert({ ...workoutPayload, user_id: user.id })
+        .select()
+        .single();
+      if (workoutError || !workout) {
+        setError(workoutError?.message ?? "Failed to create workout.");
+        setSubmitting(false);
+        return;
+      }
+      workoutId = workout.id;
     }
 
     const setRows = blocks.flatMap((block, blockIndex) =>
       block.sets.map((s, setIndex) => ({
-        workout_id: workout.id,
+        workout_id: workoutId!,
         exercise_id: block.exerciseId,
         weight: Number(s.weight) || 0,
         reps: Number(s.reps) || 0,
@@ -137,12 +195,14 @@ export default function WorkoutForm() {
       setError(setsError.message);
       return;
     }
-    navigate(`/workouts/${workout.id}`);
+    navigate(`/workouts/${workoutId}`);
   }
+
+  if (loading) return <p className="muted">Loading…</p>;
 
   return (
     <div>
-      <h1>Log a workout</h1>
+      <h1>{isEdit ? "Edit workout" : "Log a workout"}</h1>
       <form className="form-grid panel" onSubmit={handleSubmit}>
         <div className="row">
           <div className="field" style={{ minWidth: 160 }}>
@@ -272,7 +332,7 @@ export default function WorkoutForm() {
         {error && <p className="error-text">{error}</p>}
         <div className="row">
           <button type="submit" className="primary" disabled={submitting}>
-            {submitting ? "Saving…" : "Save workout"}
+            {submitting ? "Saving…" : isEdit ? "Save changes" : "Save workout"}
           </button>
         </div>
       </form>

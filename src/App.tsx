@@ -13,6 +13,7 @@ import WorkoutForm from "./pages/WorkoutForm";
 import WorkoutDetail from "./pages/WorkoutDetail";
 import Group from "./pages/Group";
 import Profile from "./pages/Profile";
+import Chat from "./pages/Chat";
 
 function AppLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -46,7 +47,9 @@ export default function App() {
           <Route path="/workouts" element={<Protected><Workouts /></Protected>} />
           <Route path="/workouts/new" element={<Protected><WorkoutForm /></Protected>} />
           <Route path="/workouts/:id" element={<Protected><WorkoutDetail /></Protected>} />
+          <Route path="/workouts/:id/edit" element={<Protected><WorkoutForm /></Protected>} />
           <Route path="/group" element={<Protected><Group /></Protected>} />
+          <Route path="/chat" element={<Protected><Chat /></Protected>} />
           <Route path="/profile" element={<Protected><Profile /></Protected>} />
         </Routes>
       </BrowserRouter>

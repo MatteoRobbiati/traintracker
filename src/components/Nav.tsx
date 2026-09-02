@@ -5,13 +5,15 @@ const LINKS = [
   { to: "/", label: "Dashboard", icon: "◆" },
   { to: "/exercises", label: "Exercises", icon: "▤" },
   { to: "/workouts", label: "Workouts", icon: "●" },
+  { to: "/chat", label: "Chat", icon: "✦" },
   { to: "/group", label: "Group", icon: "▲" },
   { to: "/profile", label: "Profile", icon: "◐" },
 ];
 
 export default function Nav() {
-  const { signOut } = useAuth();
+  const { signOut, onlineUsers, user } = useAuth();
   const navigate = useNavigate();
+  const othersOnline = Object.keys(onlineUsers).filter((id) => id !== user?.id).length;
 
   async function handleSignOut() {
     await signOut();
@@ -26,6 +28,11 @@ export default function Nav() {
           {LINKS.map((l) => (
             <NavLink key={l.to} to={l.to} end={l.to === "/"}>
               {l.label}
+              {l.to === "/chat" && othersOnline > 0 && (
+                <span className="chip focus" style={{ marginLeft: 6, padding: "1px 6px" }}>
+                  {othersOnline}
+                </span>
+              )}
             </NavLink>
           ))}
           <button type="button" className="linklike" onClick={handleSignOut}>
