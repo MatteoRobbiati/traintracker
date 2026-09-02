@@ -1,4 +1,4 @@
-# Gym Tracker
+# TrainTrack
 
 A small group workout tracker: shared exercise library with a muscle-map
 preview, per-user workout logging, body weight history, and charts comparing
@@ -55,15 +55,11 @@ assisted movements.
 
 ## Deploying to GitHub Pages
 
-`vite.config.ts` sets `base: "/gym-tracker/"` — update that first if your repo
+`vite.config.ts` sets `base: "/traintrack/"` — update that first if your repo
 has a different name.
 
 ```sh
-git init
-git add .
-git commit -m "Initial commit"
-git branch -M main
-git remote add origin git@github.com:<you>/gym-tracker.git
+git remote add origin git@github.com:<you>/traintrack.git
 git push -u origin main
 
 npm run deploy   # builds and pushes dist/ to the gh-pages branch
