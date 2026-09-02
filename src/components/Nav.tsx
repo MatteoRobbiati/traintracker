@@ -1,12 +1,13 @@
 import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { DashboardIcon, ExercisesIcon, WorkoutsIcon, ChatIcon, GroupIcon, ProfileIcon } from "./icons";
 
 const LINKS = [
-  { to: "/", label: "Dashboard", icon: "◆" },
-  { to: "/exercises", label: "Exercises", icon: "▤" },
-  { to: "/workouts", label: "Workouts", icon: "●" },
-  { to: "/group", label: "Group", icon: "▲" },
-  { to: "/profile", label: "Profile", icon: "◐" },
+  { to: "/", label: "Dashboard", Icon: DashboardIcon },
+  { to: "/exercises", label: "Exercises", Icon: ExercisesIcon },
+  { to: "/workouts", label: "Workouts", Icon: WorkoutsIcon },
+  { to: "/group", label: "Group", Icon: GroupIcon },
+  { to: "/profile", label: "Profile", Icon: ProfileIcon },
 ];
 
 interface NavProps {
@@ -24,17 +25,6 @@ export default function Nav({ chatOpen, onToggleChat }: NavProps) {
     navigate("/login");
   }
 
-  const chatButton = (className: string) => (
-    <button type="button" className={className} onClick={onToggleChat} aria-pressed={chatOpen}>
-      <span aria-hidden="true">✦</span> Chat
-      {othersOnline > 0 && (
-        <span className="chip focus" style={{ marginLeft: 6, padding: "1px 6px" }}>
-          {othersOnline}
-        </span>
-      )}
-    </button>
-  );
-
   return (
     <>
       <nav className="top-nav">
@@ -45,23 +35,44 @@ export default function Nav({ chatOpen, onToggleChat }: NavProps) {
               {l.label}
             </NavLink>
           ))}
-          {chatButton("linklike")}
+          <button type="button" className="linklike" onClick={onToggleChat} aria-pressed={chatOpen}>
+            Chat
+            {othersOnline > 0 && (
+              <span className="chip focus" style={{ marginLeft: 6, padding: "1px 6px" }}>
+                {othersOnline}
+              </span>
+            )}
+          </button>
           <button type="button" className="linklike" onClick={handleSignOut}>
             Sign out
           </button>
         </div>
       </nav>
       <nav className="bottom-nav">
-        {LINKS.map((l) => (
-          <NavLink key={l.to} to={l.to} end={l.to === "/"}>
-            <span aria-hidden="true">{l.icon}</span>
-            {l.label}
+        {LINKS.slice(0, 3).map((l) => (
+          <NavLink key={l.to} to={l.to} end={l.to === "/"} className="bottom-nav-item">
+            <l.Icon />
+            <span>{l.label}</span>
           </NavLink>
         ))}
-        <button type="button" className="linklike" onClick={onToggleChat}>
-          <span aria-hidden="true">✦</span>
-          Chat
+        <button
+          type="button"
+          className="bottom-nav-item bottom-nav-button"
+          onClick={onToggleChat}
+          aria-pressed={chatOpen}
+        >
+          <span style={{ position: "relative" }}>
+            <ChatIcon />
+            {othersOnline > 0 && <span className="bottom-nav-badge">{othersOnline}</span>}
+          </span>
+          <span>Chat</span>
         </button>
+        {LINKS.slice(3).map((l) => (
+          <NavLink key={l.to} to={l.to} end={l.to === "/"} className="bottom-nav-item">
+            <l.Icon />
+            <span>{l.label}</span>
+          </NavLink>
+        ))}
       </nav>
     </>
   );

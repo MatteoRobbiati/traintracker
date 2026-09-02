@@ -256,34 +256,62 @@ button.linklike { background: none; border: none; cursor: pointer; }
   .bottom-nav {
     display: flex;
     justify-content: space-around;
+    align-items: center;
     position: fixed;
     bottom: 0; left: 0; right: 0;
     background: var(--paper-raised);
     border-top: 1px solid var(--line);
-    padding: 6px 0 max(6px, env(safe-area-inset-bottom));
+    padding: 4px 4px max(4px, env(safe-area-inset-bottom));
     z-index: 10;
+    box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.05);
   }
-  .bottom-nav a {
+  .bottom-nav-item {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 2px;
-    font-size: 10px;
+    justify-content: center;
+    gap: 3px;
+    flex: 1;
+    min-width: 0;
+    min-height: 52px;
+    border-radius: 12px;
+    font-size: 10.5px;
+    font-weight: 500;
     color: var(--ink-soft);
     text-decoration: none;
-    padding: 4px 8px;
+    background: none;
+    border: none;
+    padding: 6px 2px;
   }
-  .bottom-nav a.active { color: var(--ember); }
-  .bottom-nav button.linklike {
+  .bottom-nav-item span:last-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+  }
+  .bottom-nav-item.active,
+  .bottom-nav-item[aria-pressed="true"] {
+    color: var(--ember);
+    background: var(--ember-muted);
+  }
+  .bottom-nav-badge {
+    position: absolute;
+    top: -5px;
+    right: -9px;
+    background: var(--ember);
+    color: #fff;
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 1;
+    min-width: 14px;
+    height: 14px;
+    border-radius: 999px;
     display: flex;
-    flex-direction: column;
     align-items: center;
-    gap: 2px;
-    font-size: 10px;
-    color: var(--ink-soft);
-    padding: 4px 8px;
+    justify-content: center;
+    padding: 0 3px;
   }
-  .app-main { padding-bottom: 84px; }
+  .app-main { padding-bottom: 88px; }
 }
 
 /* Chat side panel — docked on desktop, full-screen overlay on mobile.
