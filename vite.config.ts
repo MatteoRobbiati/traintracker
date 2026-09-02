@@ -5,5 +5,5 @@ import react from "@vitejs/plugin-react";
 // the repo this ends up in. Update it before your first deploy.
 export default defineConfig({
   plugins: [react()],
-  base: "/traintrack/",
+  base: "/traintracker/",
 });
