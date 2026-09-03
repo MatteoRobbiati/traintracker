@@ -3,10 +3,17 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
 import { useAuth } from "../context/AuthContext";
 import { formatDate, setVolume } from "../lib/format";
+import { saveWorkoutAsTemplate } from "../lib/templates";
 import { SPORT_LABELS, CLIMBING_DISCIPLINE_LABELS, type ClimbingDiscipline } from "../constants/sports";
 import type { Exercise, EnduranceDetails, Workout, WorkoutSet } from "../types/database";
 
 type SetWithExercise = WorkoutSet & { exercise: Pick<Exercise, "id" | "name" | "is_bodyweight"> };
+
+interface EditRow {
+  weight: string;
+  reps: string;
+  rest: string;
+}
 
 function sportLabel(sport: string): string {
   return (SPORT_LABELS as Record<string, string>)[sport] ?? sport;
@@ -23,6 +30,21 @@ export default function WorkoutDetail() {
   const [bodyWeightKg, setBodyWeightKg] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
+
+  // Inline "click a value, change it" editing of the logged sets, without
+  // leaving this page for the full /edit form (that form is still there for
+  // structural changes -- adding/removing whole exercises).
+  const [editingSets, setEditingSets] = useState(false);
+  const [editValues, setEditValues] = useState<Record<string, EditRow>>({});
+  const [savingSets, setSavingSets] = useState(false);
+
+  // Save-this-logged-workout-as-a-template, same as the one in WorkoutForm.
+  const [showSaveTemplate, setShowSaveTemplate] = useState(false);
+  const [templateName, setTemplateName] = useState("");
+  const [savingTemplate, setSavingTemplate] = useState(false);
+  const [templateSaved, setTemplateSaved] = useState(false);
+
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -97,6 +119,104 @@ export default function WorkoutDetail() {
     if (!error) navigate("/workouts");
   }
 
+  function startEditingSets() {
+    const values: Record<string, EditRow> = {};
+    for (const s of sets) {
+      values[s.id] = {
+        weight: String(s.weight),
+        reps: String(s.reps),
+        rest: s.rest_time_seconds != null ? String(s.rest_time_seconds) : "",
+      };
+    }
+    setEditValues(values);
+    setEditingSets(true);
+  }
+
+  function updateEditRow(setId: string, patch: Partial<EditRow>) {
+    setEditValues((prev) => ({ ...prev, [setId]: { ...prev[setId], ...patch } }));
+  }
+
+  async function removeSetRow(setId: string) {
+    const { error } = await supabase.from("sets").delete().eq("id", setId);
+    if (error) {
+      setError(error.message);
+      return;
+    }
+    setSets((prev) => prev.filter((s) => s.id !== setId));
+    setEditValues((prev) => {
+      const next = { ...prev };
+      delete next[setId];
+      return next;
+    });
+  }
+
+  async function saveSetEdits() {
+    setSavingSets(true);
+    setError(null);
+    const updates = sets.map((s) => {
+      const edited = editValues[s.id];
+      return supabase
+        .from("sets")
+        .update({
+          weight: Number(edited.weight) || 0,
+          reps: Number(edited.reps) || 0,
+          rest_time_seconds: edited.rest ? Number(edited.rest) : null,
+        })
+        .eq("id", s.id);
+    });
+    const results = await Promise.all(updates);
+    const failed = results.find((r) => r.error);
+    setSavingSets(false);
+    if (failed?.error) {
+      setError(failed.error.message);
+      return;
+    }
+    setSets((prev) =>
+      prev.map((s) => ({
+        ...s,
+        weight: Number(editValues[s.id].weight) || 0,
+        reps: Number(editValues[s.id].reps) || 0,
+        rest_time_seconds: editValues[s.id].rest ? Number(editValues[s.id].rest) : null,
+      }))
+    );
+    setEditingSets(false);
+  }
+
+  async function handleSaveAsTemplate() {
+    if (!user || !workout || !templateName.trim()) return;
+    setSavingTemplate(true);
+    setError(null);
+
+    const { error: saveError } = await saveWorkoutAsTemplate({
+      userId: user.id,
+      name: templateName.trim(),
+      workoutType: workout.workout_type,
+      warmup: workout.warmup,
+      notes: workout.notes,
+      durationMinutes: workout.duration_minutes,
+      sport: endurance?.sport ?? null,
+      discipline: endurance?.discipline ?? null,
+      distanceKm: endurance?.distance_km ?? null,
+      sessionDetail: endurance?.session_detail ?? null,
+      sets: sets.map((s) => ({
+        exerciseId: s.exercise_id,
+        weight: s.weight,
+        reps: s.reps,
+        restTimeSeconds: s.rest_time_seconds,
+      })),
+    });
+
+    setSavingTemplate(false);
+    if (saveError) {
+      setError(saveError);
+      return;
+    }
+    setShowSaveTemplate(false);
+    setTemplateName("");
+    setTemplateSaved(true);
+    setTimeout(() => setTemplateSaved(false), 3000);
+  }
+
   if (loading) return <p className="muted">Loading…</p>;
   if (!workout) return <p className="muted">Workout not found.</p>;
 
@@ -150,39 +270,96 @@ export default function WorkoutDetail() {
               <div key={g.name} className="panel">
                 <h3>{g.name}</h3>
                 <div className="table-scroll">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>#</th>
-                      <th>{g.isBodyweight ? "Added weight" : "Weight"}</th>
-                      <th>Reps</th>
-                      <th>Rest</th>
-                      <th>Volume</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {g.sets.map((s, i) => (
-                      <tr key={s.id}>
-                        <td>{i + 1}</td>
-                        <td>{s.weight}</td>
-                        <td>{s.reps}</td>
-                        <td>{s.rest_time_seconds != null ? `${s.rest_time_seconds}s` : "—"}</td>
-                        <td>
-                          {setVolume({
-                            isBodyweight: g.isBodyweight,
-                            weight: s.weight,
-                            reps: s.reps,
-                            bodyWeightKg,
-                          }).toFixed(0)}
-                        </td>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>#</th>
+                        <th>{g.isBodyweight ? "Added weight" : "Weight"}</th>
+                        <th>Reps</th>
+                        <th>Rest</th>
+                        <th>Volume</th>
+                        {editingSets && <th />}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {g.sets.map((s, i) => {
+                        const edited = editValues[s.id];
+                        const weight = editingSets && edited ? Number(edited.weight) || 0 : s.weight;
+                        const reps = editingSets && edited ? Number(edited.reps) || 0 : s.reps;
+                        return (
+                          <tr key={s.id}>
+                            <td>{i + 1}</td>
+                            {editingSets && edited ? (
+                              <>
+                                <td>
+                                  <input
+                                    type="number"
+                                    value={edited.weight}
+                                    onChange={(e) => updateEditRow(s.id, { weight: e.target.value })}
+                                  />
+                                </td>
+                                <td>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    value={edited.reps}
+                                    onChange={(e) => updateEditRow(s.id, { reps: e.target.value })}
+                                  />
+                                </td>
+                                <td>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    value={edited.rest}
+                                    onChange={(e) => updateEditRow(s.id, { rest: e.target.value })}
+                                  />
+                                </td>
+                              </>
+                            ) : (
+                              <>
+                                <td>{s.weight}</td>
+                                <td>{s.reps}</td>
+                                <td>{s.rest_time_seconds != null ? `${s.rest_time_seconds}s` : "—"}</td>
+                              </>
+                            )}
+                            <td>
+                              {setVolume({ isBodyweight: g.isBodyweight, weight, reps, bodyWeightKg }).toFixed(0)}
+                            </td>
+                            {editingSets && (
+                              <td>
+                                <button type="button" className="ghost" onClick={() => removeSetRow(s.id)}>
+                                  ✕
+                                </button>
+                              </td>
+                            )}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             ))}
           </div>
+
+          {isOwner && sets.length > 0 && (
+            <div className="row" style={{ marginTop: 12 }}>
+              {editingSets ? (
+                <>
+                  <button type="button" className="primary" onClick={saveSetEdits} disabled={savingSets}>
+                    {savingSets ? "Saving…" : "Save values"}
+                  </button>
+                  <button type="button" className="ghost" onClick={() => setEditingSets(false)}>
+                    Cancel
+                  </button>
+                </>
+              ) : (
+                <button type="button" onClick={startEditingSets}>
+                  Edit values
+                </button>
+              )}
+            </div>
+          )}
         </>
       )}
 
@@ -192,6 +369,44 @@ export default function WorkoutDetail() {
           <p>{workout.notes}</p>
         </div>
       )}
+
+      {isOwner && (
+        <div className="panel" style={{ marginTop: 12 }}>
+          <p className="eyebrow" style={{ margin: "0 0 8px" }}>
+            Template
+          </p>
+          {showSaveTemplate ? (
+            <div className="row">
+              <input
+                autoFocus
+                value={templateName}
+                onChange={(e) => setTemplateName(e.target.value)}
+                placeholder="Template name"
+                style={{ maxWidth: 240 }}
+              />
+              <button
+                type="button"
+                onClick={handleSaveAsTemplate}
+                disabled={savingTemplate || !templateName.trim()}
+              >
+                {savingTemplate ? "Saving…" : "Save"}
+              </button>
+              <button type="button" className="ghost" onClick={() => setShowSaveTemplate(false)}>
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <div className="row">
+              <button type="button" className="ghost" onClick={() => setShowSaveTemplate(true)}>
+                Save as template
+              </button>
+              {templateSaved && <span className="muted">Saved.</span>}
+            </div>
+          )}
+        </div>
+      )}
+
+      {error && <p className="error-text">{error}</p>}
 
       {isOwner && (
         <div className="row" style={{ marginTop: 16 }}>

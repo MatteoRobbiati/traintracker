@@ -4,6 +4,7 @@ import { supabase } from "../lib/supabaseClient";
 import { useAuth } from "../context/AuthContext";
 import { setVolume } from "../lib/format";
 import { SPORTS, SPORT_LABELS, CLIMBING_DISCIPLINES, CLIMBING_DISCIPLINE_LABELS } from "../constants/sports";
+import { saveWorkoutAsTemplate } from "../lib/templates";
 import type { WorkoutTemplate, WorkoutType } from "../types/database";
 
 interface ExerciseOption {
@@ -244,51 +245,32 @@ export default function WorkoutForm() {
     setError(null);
 
     const resolvedSport = sport === OTHER_SPORT ? customSport.trim() : sport;
-    const { data: template, error: templateError } = await supabase
-      .from("workout_templates")
-      .insert({
-        user_id: user.id,
-        name: templateName.trim(),
-        workout_type: workoutType,
-        warmup: warmup.trim() || null,
-        notes: notes.trim() || null,
-        duration_minutes: duration ? Number(duration) : null,
-        sport: workoutType === "endurance" ? resolvedSport : null,
-        discipline: workoutType === "endurance" && sport === "climbing" && discipline ? discipline : null,
-        distance_km: workoutType === "endurance" && distanceKm ? Number(distanceKm) : null,
-        session_detail: workoutType === "endurance" ? sessionDetail.trim() || null : null,
-      })
-      .select()
-      .single();
-
-    if (templateError || !template) {
-      setSavingTemplate(false);
-      setError(templateError?.message ?? "Failed to save template.");
-      return;
-    }
-
-    if (workoutType === "strength") {
-      const rows = blocks.flatMap((block, blockIndex) =>
-        block.sets.map((s, setIndex) => ({
-          template_id: template.id,
-          exercise_id: block.exerciseId,
+    const { error: saveError } = await saveWorkoutAsTemplate({
+      userId: user.id,
+      name: templateName.trim(),
+      workoutType,
+      warmup: warmup.trim() || null,
+      notes: notes.trim() || null,
+      durationMinutes: duration ? Number(duration) : null,
+      sport: resolvedSport,
+      discipline: sport === "climbing" && discipline ? discipline : null,
+      distanceKm: distanceKm ? Number(distanceKm) : null,
+      sessionDetail: sessionDetail.trim() || null,
+      sets: blocks.flatMap((block) =>
+        block.sets.map((s) => ({
+          exerciseId: block.exerciseId,
           weight: Number(s.weight) || 0,
           reps: Number(s.reps) || 0,
-          rest_time_seconds: s.restSeconds ? Number(s.restSeconds) : null,
-          set_order: blockIndex * 1000 + setIndex,
+          restTimeSeconds: s.restSeconds ? Number(s.restSeconds) : null,
         }))
-      );
-      if (rows.length > 0) {
-        const { error: setsError } = await supabase.from("template_sets").insert(rows);
-        if (setsError) {
-          setSavingTemplate(false);
-          setError(setsError.message);
-          return;
-        }
-      }
-    }
+      ),
+    });
 
     setSavingTemplate(false);
+    if (saveError) {
+      setError(saveError);
+      return;
+    }
     setShowSaveTemplate(false);
     setTemplateName("");
     setTemplateSaved(true);
