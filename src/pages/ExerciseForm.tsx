@@ -40,6 +40,19 @@ export default function ExerciseForm() {
       });
   }, [id]);
 
+  function cycleMuscle(m: Muscle) {
+    // none -> primary -> secondary -> none, so clicking the figure alone is
+    // enough to fully assign muscles without touching the checklists.
+    if (primary.includes(m)) {
+      setPrimary(primary.filter((x) => x !== m));
+      setSecondary([...secondary, m]);
+    } else if (secondary.includes(m)) {
+      setSecondary(secondary.filter((x) => x !== m));
+    } else {
+      setPrimary([...primary, m]);
+    }
+  }
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setSubmitting(true);
@@ -100,7 +113,10 @@ export default function ExerciseForm() {
 
         <div>
           <p className="eyebrow">Preview</p>
-          <MuscleMap primaryMuscles={primary} secondaryMuscles={secondary} />
+          <p className="muted" style={{ fontSize: 12, margin: "0 0 8px" }}>
+            You can also click a muscle directly — it cycles none → primary → secondary → none.
+          </p>
+          <MuscleMap primaryMuscles={primary} secondaryMuscles={secondary} onMuscleClick={cycleMuscle} />
         </div>
 
         {error && <p className="error-text">{error}</p>}

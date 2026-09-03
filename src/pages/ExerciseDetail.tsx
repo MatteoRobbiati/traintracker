@@ -55,7 +55,14 @@ export default function ExerciseDetail() {
       {exercise.description && <p className="muted">{exercise.description}</p>}
 
       <div className="panel">
-        <MuscleMap primaryMuscles={exercise.primary_muscles} secondaryMuscles={exercise.secondary_muscles} />
+        <p className="muted" style={{ fontSize: 12, margin: "0 0 8px" }}>
+          Click a muscle to see every exercise that involves it.
+        </p>
+        <MuscleMap
+          primaryMuscles={exercise.primary_muscles}
+          secondaryMuscles={exercise.secondary_muscles}
+          onMuscleClick={(m) => navigate(`/exercises?muscle=${m}`)}
+        />
         <div className="muscle-legend">
           <div className="muscle-legend-item"><span className="swatch primary" />Primary muscle</div>
           <div className="muscle-legend-item"><span className="swatch secondary" />Secondary muscle</div>

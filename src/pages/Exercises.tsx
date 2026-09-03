@@ -1,14 +1,27 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
-import { MUSCLE_LABELS, type Muscle } from "../constants/muscles";
+import MuscleMap from "../components/MuscleMap";
+import { MUSCLE_LABELS, MUSCLES, type Muscle } from "../constants/muscles";
 import type { Exercise } from "../types/database";
 
+function isMuscle(value: string): value is Muscle {
+  return (MUSCLES as readonly string[]).includes(value);
+}
+
 export default function Exercises() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [exercises, setExercises] = useState<Exercise[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [muscleFilter, setMuscleFilter] = useState<Muscle | "">("");
+  const [showMap, setShowMap] = useState(false);
+
+  const muscleParam = searchParams.get("muscle") ?? "";
+  const muscleFilter: Muscle | "" = isMuscle(muscleParam) ? muscleParam : "";
+
+  useEffect(() => {
+    if (muscleFilter) setShowMap(true);
+  }, [muscleFilter]);
 
   useEffect(() => {
     supabase
@@ -20,6 +33,10 @@ export default function Exercises() {
         setLoading(false);
       });
   }, []);
+
+  function setMuscleFilter(next: Muscle | "") {
+    setSearchParams(next ? { muscle: next } : {}, { replace: true });
+  }
 
   const filtered = useMemo(() => {
     return exercises.filter((ex) => {
@@ -43,22 +60,41 @@ export default function Exercises() {
         </Link>
       </div>
 
-      <div className="row panel" style={{ marginBottom: 16 }}>
-        <div className="field" style={{ flex: 1, minWidth: 180 }}>
-          <label htmlFor="search">Search</label>
-          <input id="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Exercise name…" />
+      <div className="panel" style={{ marginBottom: 16 }}>
+        <div className="row">
+          <div className="field" style={{ flex: 1, minWidth: 180 }}>
+            <label htmlFor="search">Search</label>
+            <input id="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Exercise name…" />
+          </div>
+          <div className="field" style={{ minWidth: 180 }}>
+            <label htmlFor="muscle">Muscle</label>
+            <select id="muscle" value={muscleFilter} onChange={(e) => setMuscleFilter(e.target.value as Muscle | "")}>
+              <option value="">All muscles</option>
+              {Object.entries(MUSCLE_LABELS).map(([id, label]) => (
+                <option key={id} value={id}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
-        <div className="field" style={{ minWidth: 180 }}>
-          <label htmlFor="muscle">Muscle</label>
-          <select id="muscle" value={muscleFilter} onChange={(e) => setMuscleFilter(e.target.value as Muscle | "")}>
-            <option value="">All muscles</option>
-            {Object.entries(MUSCLE_LABELS).map(([id, label]) => (
-              <option key={id} value={id}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </div>
+
+        <button type="button" className="ghost" style={{ marginTop: 10 }} onClick={() => setShowMap((v) => !v)}>
+          {showMap ? "Hide" : "Browse by muscle"} {showMap ? "▴" : "▾"}
+        </button>
+
+        {showMap && (
+          <div style={{ marginTop: 12 }}>
+            <p className="muted" style={{ fontSize: 12, margin: "0 0 8px" }}>
+              Click a muscle to filter the list below. Click it again to clear.
+            </p>
+            <MuscleMap
+              primaryMuscles={muscleFilter ? [muscleFilter] : []}
+              secondaryMuscles={[]}
+              onMuscleClick={(m) => setMuscleFilter(muscleFilter === m ? "" : m)}
+            />
+          </div>
+        )}
       </div>
 
       {loading && <p className="muted">Loading…</p>}
