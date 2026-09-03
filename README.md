@@ -46,7 +46,12 @@ Use this link to start logging: [https://matteorobbiati.github.io/traintracker/l
   `touch_last_seen` heartbeat, and the Realtime Presence subscription behind
   "who's online".
 - `src/components/MuscleMap.tsx` — the front/back muscle SVG, driven by an
-  exercise's `primary_muscles`/`secondary_muscles`.
+  exercise's `primary_muscles`/`secondary_muscles`; regions are clickable
+  when `onMuscleClick` is passed.
+- `src/components/ChatPanel.tsx` — persistent chat side panel (not a route —
+  mounted once in the shared authenticated layout so it survives navigation).
+- `src/hooks/useConnections.ts` — shared connection-request state, used by
+  both Profile's member list and the chat panel's online-people popover.
 - `src/pages/` — one file per route (see below).
 
 ## Routes
@@ -57,7 +62,6 @@ Use this link to start logging: [https://matteorobbiati.github.io/traintracker/l
 | `/` | Dashboard — recent workouts, latest body weight, quick actions |
 | `/exercises`, `/exercises/new`, `/exercises/:id`, `/exercises/:id/edit` | Shared exercise library |
 | `/workouts`, `/workouts/new`, `/workouts/:id`, `/workouts/:id/edit` | Personal workout log + history |
-| `/chat` | Group chat (single room, persisted) + who's online right now |
 | `/group` | Recharts: weekly volume, workout frequency, muscle distribution, per-exercise comparison |
 | `/profile` | Body weight log, group "last seen" list, and connection requests |
 
