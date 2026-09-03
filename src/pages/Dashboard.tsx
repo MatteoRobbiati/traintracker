@@ -3,11 +3,20 @@ import { Link } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
 import { useAuth } from "../context/AuthContext";
 import { formatDate } from "../lib/format";
+import { SPORT_LABELS } from "../constants/sports";
 import type { Workout } from "../types/database";
+
+function sportLabel(sport: string): string {
+  return (SPORT_LABELS as Record<string, string>)[sport] ?? sport;
+}
+
+interface RecentWorkout extends Workout {
+  sport: string | null;
+}
 
 export default function Dashboard() {
   const { profile, user } = useAuth();
-  const [recentWorkouts, setRecentWorkouts] = useState<Workout[]>([]);
+  const [recentWorkouts, setRecentWorkouts] = useState<RecentWorkout[]>([]);
   const [latestWeight, setLatestWeight] = useState<number | null>(null);
   const [workoutCount, setWorkoutCount] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
@@ -20,7 +29,7 @@ export default function Dashboard() {
       const [{ data: workouts }, { data: weight }, { count }] = await Promise.all([
         supabase
           .from("workouts")
-          .select("*")
+          .select("*, endurance_details(sport)")
           .eq("user_id", user!.id)
           .order("date", { ascending: false })
           .limit(5),
@@ -37,7 +46,9 @@ export default function Dashboard() {
           .eq("user_id", user!.id),
       ]);
       if (cancelled) return;
-      setRecentWorkouts(workouts ?? []);
+      setRecentWorkouts(
+        (workouts ?? []).map((w: any) => ({ ...w, sport: w.endurance_details?.sport ?? null }))
+      );
       setLatestWeight(weight?.weight_kg ?? null);
       setWorkoutCount(count ?? 0);
       setLoading(false);
@@ -88,8 +99,11 @@ export default function Dashboard() {
           {recentWorkouts.map((w) => (
             <Link key={w.id} to={`/workouts/${w.id}`} className="card-link">
               <div className="row between">
-                <strong>{formatDate(w.date)}</strong>
-                {w.duration_minutes != null && <span className="chip">{w.duration_minutes} min</span>}
+                <strong>{w.sport ? sportLabel(w.sport) : formatDate(w.date)}</strong>
+                <div className="row" style={{ gap: 6 }}>
+                  {w.sport && <span className="chip">{formatDate(w.date)}</span>}
+                  {w.duration_minutes != null && <span className="chip">{w.duration_minutes} min</span>}
+                </div>
               </div>
               {w.notes && <p className="muted" style={{ margin: "4px 0 0" }}>{w.notes}</p>}
             </Link>
