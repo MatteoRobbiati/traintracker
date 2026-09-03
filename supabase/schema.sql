@@ -24,11 +24,17 @@ create table public.profiles (
   id          uuid primary key references auth.users(id) on delete cascade,
   name        text not null,
   last_seen   timestamptz not null default now(),
-  created_at  timestamptz not null default now()
+  created_at  timestamptz not null default now(),
+  theme_mode  text not null default 'system' check (theme_mode in ('system', 'light', 'dark')),
+  accent      text not null default 'ember'  check (accent in ('ember', 'ocean', 'forest', 'grape', 'rose'))
 );
 
 comment on column public.profiles.last_seen is
   'Updated via the touch_last_seen() RPC, called on app load and after key actions.';
+comment on column public.profiles.theme_mode is
+  'Appearance preference, synced across devices -- see src/context/ThemeContext.tsx.';
+comment on column public.profiles.accent is
+  'Accent color id from src/lib/theme.ts ACCENTS -- keep the CHECK list in sync with it.';
 
 -- ============================================================================
 -- body_weight_logs — historized body weight. "Current weight" = most recent

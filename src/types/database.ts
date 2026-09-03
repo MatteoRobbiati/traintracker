@@ -6,12 +6,15 @@
 // `Record<string, unknown>` under `strict`, which is exactly what
 // supabase-js's generic `Database` constraint requires for each table's Row.
 import type { Muscle } from "../constants/muscles";
+import type { ThemeMode, AccentId } from "../lib/theme";
 
 export type Profile = {
   id: string;
   name: string;
   last_seen: string;
   created_at: string;
+  theme_mode: ThemeMode;
+  accent: AccentId;
 };
 
 export type BodyWeightLog = {
