@@ -146,17 +146,29 @@ type to filter instead of scrolling the whole exercise library blind. It's
 a generic text-input-plus-filtered-dropdown component, reusable anywhere
 else an option list might outgrow a native select.
 
-Appearance (Profile → **Appearance**) is per-device, not per-account: a
-light/dark/system theme mode and an accent color, both in `localStorage`
-(`src/lib/theme.ts`, `src/context/ThemeContext.tsx`). "System" tracks the
-OS setting live. The base paper/ink palette stays CSS-driven via
-`data-theme` on `<html>` (already there for dark mode — this just added the
-UI to force it); the accent's `--ember`/`--ember-muted`/`--focus` are written
-directly as inline CSS variables rather than a `data-accent` × `data-theme`
-CSS matrix, so a new accent is one object entry, not several new rule
-blocks. `index.html` carries a plain-JS duplicate of the palette table in a
-pre-React init script so the right colors are already applied before first
-paint — keep the two in sync if a palette value changes.
+Appearance (Profile → **Appearance**) is a light/dark/system theme mode
+plus an accent color (`src/lib/theme.ts`, `src/context/ThemeContext.tsx`).
+"System" tracks the OS setting live. The base paper/ink palette stays
+CSS-driven via `data-theme` on `<html>` (already there for dark mode — this
+just added the UI to force it); the accent's
+`--ember`/`--ember-muted`/`--focus` are written directly as inline CSS
+variables rather than a `data-accent` × `data-theme` CSS matrix, so a new
+accent is one object entry, not several new rule blocks. `index.html`
+carries a plain-JS duplicate of the palette table in a pre-React init
+script, applied from `localStorage` before first paint so there's no flash
+— keep the two in sync if a palette value changes.
+
+The preference itself is synced to the account (`profiles.theme_mode` /
+`profiles.accent`, migration
+[`005_profile_theme.sql`](supabase/migrations/005_profile_theme.sql)), not
+just the device: `ThemeProvider` (nested inside `AuthProvider` so it can
+read the logged-in profile) pulls the account's saved value in once per
+login and writes back to `profiles` on every change, with `localStorage`
+kept only as the pre-login/pre-profile-load fallback (and if a write ever
+fails). Before this, an accent picked in a private-browsing window or on a
+different device simply didn't carry over — that was `localStorage` working
+as designed, just not what "save my color" implied once there's an account
+already synced across everything else.
 
 From the "Log a workout" form, the current fields can be saved as a named
 **template** (`workout_templates` + `template_sets`, mirroring
