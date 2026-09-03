@@ -54,6 +54,7 @@ export default function Group() {
   const [loading, setLoading] = useState(true);
   const [selectedExercise, setSelectedExercise] = useState<string>("");
   const [muscleUserFilter, setMuscleUserFilter] = useState<string>("");
+  const [muscleRangeDays, setMuscleRangeDays] = useState<number>(28);
 
   useEffect(() => {
     async function load() {
@@ -160,11 +161,16 @@ export default function Group() {
   }, [weightLogs, profileNames]);
 
   // Muscle heat: volume split evenly across an exercise's primary muscles,
-  // normalized 0..1 against the most-trained muscle for the figure.
+  // normalized 0..1 against the most-trained muscle for the figure. Scoped
+  // to a rolling window by default -- an all-time total barely moves for
+  // one new session once there's weeks of history behind it, which reads
+  // as "nothing changed" even though it did.
   const muscleIntensities = useMemo(() => {
+    const cutoff = muscleRangeDays === 0 ? null : new Date(Date.now() - muscleRangeDays * 86400000);
     const totals = new Map<Muscle, number>();
     for (const r of enriched) {
       if (muscleUserFilter && r.userName !== muscleUserFilter) continue;
+      if (cutoff && new Date(r.date + "T00:00:00") < cutoff) continue;
       if (r.primaryMuscles.length === 0) continue;
       const share = r.volume / r.primaryMuscles.length;
       for (const m of r.primaryMuscles) {
@@ -177,7 +183,7 @@ export default function Group() {
       for (const [m, v] of totals) result[m] = v / max;
     }
     return result;
-  }, [enriched, muscleUserFilter]);
+  }, [enriched, muscleUserFilter, muscleRangeDays]);
 
   const muscleHeatEmpty = Object.keys(muscleIntensities).length === 0;
 
@@ -291,17 +297,32 @@ export default function Group() {
       <div className="panel">
           <div className="row between">
             <h3>Muscle heat</h3>
-            <select value={muscleUserFilter} onChange={(e) => setMuscleUserFilter(e.target.value)} style={{ width: "auto" }}>
-              <option value="">Everyone</option>
-              {userNames.map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
+            <div className="row" style={{ gap: 8 }}>
+              <select
+                value={muscleRangeDays}
+                onChange={(e) => setMuscleRangeDays(Number(e.target.value))}
+                style={{ width: "auto" }}
+              >
+                <option value={7}>Last 7 days</option>
+                <option value={28}>Last 4 weeks</option>
+                <option value={90}>Last 3 months</option>
+                <option value={0}>All time</option>
+              </select>
+              <select value={muscleUserFilter} onChange={(e) => setMuscleUserFilter(e.target.value)} style={{ width: "auto" }}>
+                <option value="">Everyone</option>
+                {userNames.map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
           {muscleHeatEmpty ? (
-            <p className="muted">No trained-muscle data for this selection yet.</p>
+            <p className="muted">
+              No trained-muscle data for this selection{muscleRangeDays > 0 ? " and period" : ""} yet
+              {muscleRangeDays > 0 ? " — try widening it to All time." : "."}
+            </p>
           ) : (
             <>
               <MuscleMap intensities={muscleIntensities} />

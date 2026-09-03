@@ -84,6 +84,33 @@ export type Message = {
   created_at: string;
 };
 
+// A reusable session plan -- same shape as Workout+EnduranceDetails (minus
+// `date`), private per user, never shared with the group.
+export type WorkoutTemplate = {
+  id: string;
+  user_id: string;
+  name: string;
+  workout_type: WorkoutType;
+  warmup: string | null;
+  notes: string | null;
+  duration_minutes: number | null;
+  sport: string | null;
+  discipline: string | null;
+  distance_km: number | null;
+  session_detail: string | null;
+  created_at: string;
+};
+
+export type TemplateSet = {
+  id: string;
+  template_id: string;
+  exercise_id: string;
+  weight: number;
+  reps: number;
+  rest_time_seconds: number | null;
+  set_order: number;
+};
+
 type Table<Row, Insert, Update = Partial<Insert>> = {
   Row: Row;
   Insert: Insert;
@@ -113,6 +140,14 @@ export type Database = {
       endurance_details: Table<
         EnduranceDetails,
         Pick<EnduranceDetails, "workout_id" | "sport"> & Partial<EnduranceDetails>
+      >;
+      workout_templates: Table<
+        WorkoutTemplate,
+        Pick<WorkoutTemplate, "user_id" | "name"> & Partial<WorkoutTemplate>
+      >;
+      template_sets: Table<
+        TemplateSet,
+        Pick<TemplateSet, "template_id" | "exercise_id" | "reps"> & Partial<TemplateSet>
       >;
     };
     Views: Record<string, never>;
