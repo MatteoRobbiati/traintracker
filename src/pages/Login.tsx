@@ -24,7 +24,7 @@ export default function Login() {
 
   return (
     <div className="app-main" style={{ maxWidth: 380, marginTop: 60 }}>
-      <p className="eyebrow">Gym Tracker</p>
+      <p className="eyebrow">TrainTrack</p>
       <h1>Log in</h1>
       <form className="form-grid panel" onSubmit={handleSubmit}>
         <div className="field">

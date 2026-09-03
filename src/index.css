@@ -169,6 +169,18 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 table { width: 100%; border-collapse: collapse; font-size: 14px; }
 th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
 th { color: var(--ink-soft); font-family: "IBM Plex Mono", monospace; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
+/* Inputs inside a table cell get their own (smaller) padding than the
+   global input style, and the cell itself gets less padding around them —
+   otherwise the two paddings stack and crop the value on narrow screens. */
+table td input, table td select { padding: 6px 8px; font-size: 14px; min-width: 0; }
+/* Horizontal-scroll safety net for the sets table (weight/reps/rest/volume
+   columns) rather than letting it crop or overflow the page on mobile. */
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+@media (max-width: 480px) {
+  th, td { padding: 6px 4px; }
+  table td input, table td select { padding: 5px 4px; font-size: 13px; }
+}
 
 .card-list { display: grid; gap: 12px; }
 .card-link {

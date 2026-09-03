@@ -149,6 +149,7 @@ export default function WorkoutDetail() {
             {grouped.map((g) => (
               <div key={g.name} className="panel">
                 <h3>{g.name}</h3>
+                <div className="table-scroll">
                 <table>
                   <thead>
                     <tr>
@@ -178,6 +179,7 @@ export default function WorkoutDetail() {
                     ))}
                   </tbody>
                 </table>
+                </div>
               </div>
             ))}
           </div>
