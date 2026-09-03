@@ -110,7 +110,10 @@ a { color: var(--focus); }
 
 input, select, textarea {
   font-family: "IBM Plex Sans", sans-serif;
-  font-size: 15px;
+  /* 16px, not 15 -- iOS Safari zooms the whole page in on focus for any
+     input under 16px, which is exactly the "why did my phone just jump"
+     annoyance mobile users hit typing into a weight/reps field mid-set. */
+  font-size: 16px;
   color: var(--ink);
   background: var(--paper);
   border: 1px solid var(--line);
@@ -171,15 +174,19 @@ th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--lin
 th { color: var(--ink-soft); font-family: "IBM Plex Mono", monospace; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
 /* Inputs inside a table cell get their own (smaller) padding than the
    global input style, and the cell itself gets less padding around them —
-   otherwise the two paddings stack and crop the value on narrow screens. */
-table td input, table td select { padding: 6px 8px; font-size: 14px; min-width: 0; }
+   otherwise the two paddings stack and crop the value on narrow screens.
+   Font-size stays at the global 16px on purpose, even here where space is
+   tight -- these weight/reps/rest fields are the ones typed into constantly
+   mid-workout on a phone, so this is exactly where the iOS zoom-on-focus
+   bug would be most disruptive if it crept back in below 16px. */
+table td input, table td select { padding: 6px 8px; min-width: 0; }
 /* Horizontal-scroll safety net for the sets table (weight/reps/rest/volume
    columns) rather than letting it crop or overflow the page on mobile. */
 .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
 @media (max-width: 480px) {
   th, td { padding: 6px 4px; }
-  table td input, table td select { padding: 5px 4px; font-size: 13px; }
+  table td input, table td select { padding: 5px 4px; }
 }
 
 .card-list { display: grid; gap: 12px; }

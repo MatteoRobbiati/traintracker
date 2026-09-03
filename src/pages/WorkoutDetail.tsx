@@ -294,6 +294,7 @@ export default function WorkoutDetail() {
                                 <td>
                                   <input
                                     type="number"
+                                    inputMode="decimal"
                                     value={edited.weight}
                                     onChange={(e) => updateEditRow(s.id, { weight: e.target.value })}
                                   />
@@ -301,6 +302,7 @@ export default function WorkoutDetail() {
                                 <td>
                                   <input
                                     type="number"
+                                    inputMode="numeric"
                                     min={0}
                                     value={edited.reps}
                                     onChange={(e) => updateEditRow(s.id, { reps: e.target.value })}
@@ -309,6 +311,7 @@ export default function WorkoutDetail() {
                                 <td>
                                   <input
                                     type="number"
+                                    inputMode="numeric"
                                     min={0}
                                     value={edited.rest}
                                     onChange={(e) => updateEditRow(s.id, { rest: e.target.value })}
