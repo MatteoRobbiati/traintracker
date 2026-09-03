@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>TrainTrack</title>
+    <script>
+      // GitHub Pages has no server-side routing, so a hard refresh (or a
+      // shared link) on any deep route -- /traintracker/workouts/123 --
+      // 404s here instead of reaching the app. This is the standard
+      // workaround (https://github.com/rafgraph/spa-github-pages): encode
+      // the intended path into a query string and redirect to the real
+      // index.html, which decodes it back via history.replaceState before
+      // React Router ever sees it (see the inline script in index.html).
+      var pathSegmentsToKeep = 1; // keep "/traintracker" (the repo name)
+      var l = window.location;
+      l.replace(
+        l.protocol +
+          "//" +
+          l.hostname +
+          (l.port ? ":" + l.port : "") +
+          l.pathname.split("/").slice(0, 1 + pathSegmentsToKeep).join("/") +
+          "/?/" +
+          l.pathname.slice(1).split("/").slice(pathSegmentsToKeep).join("/").replace(/&/g, "~and~") +
+          (l.search ? "&" + l.search.slice(1).replace(/&/g, "~and~") : "") +
+          l.hash
+      );
+    </script>
+  </head>
+  <body></body>
+</html>
