@@ -1,0 +1,47 @@
+name: Deploy to GitHub Pages
+
+# Runs on every push to main -- in practice, every merged PR, since main is
+# protected and only takes changes via PR. Also runnable by hand from the
+# Actions tab (workflow_dispatch) if you ever need to redeploy without a new
+# commit (e.g. after rotating the Supabase keys below).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write # needed to push the built site to the gh-pages branch
+
+# If a second push lands while a deploy is still running, cancel the older
+# one instead of racing two deploys against the same gh-pages branch.
+concurrency:
+  group: pages-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # Same env vars .env.local provides locally -- see README's "Setup"
+      # section for where to find these values, and the "Auto-deploy" section
+      # for how to add them as repo secrets.
+      - name: Build
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+        run: npm run build
+
+      - name: Publish to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist

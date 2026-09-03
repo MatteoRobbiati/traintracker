@@ -106,11 +106,29 @@ npm run deploy   # builds and pushes dist/ to the gh-pages branch
 ```
 
 Then enable Pages for the repo (Settings → Pages → Deploy from a branch →
-`gh-pages`). Set the two `VITE_SUPABASE_*` values as repo secrets only if you
-move the build into CI — for `npm run deploy` run locally, `.env.local` is
-read directly at build time. `npm run deploy` pushes straight to the
-`gh-pages` branch regardless of the branch protection below — that's the
-build output, not source, and isn't meant to go through review.
+`gh-pages`). `npm run deploy` (builds + pushes `dist/` to `gh-pages`) still
+works for a one-off manual deploy — `.env.local` is read directly at build
+time for that — but see below for deploying automatically instead.
+`gh-pages` itself isn't covered by the branch protection below — that
+guards `main` (source), not the build output.
+
+## Auto-deploy on merge
+
+[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) builds and
+publishes to `gh-pages` on every push to `main` — in practice, every merged
+PR, since `main` is protected. One-time setup: the workflow needs the same
+two values `.env.local` has, as **repo secrets** (CI has no `.env.local`):
+
+1. Repo → **Settings → Secrets and variables → Actions → New repository
+   secret**.
+2. Add `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` (Supabase → Project
+   Settings → API — same values as `.env.local`).
+
+After that, merging a PR into `main` deploys it within a minute or two, no
+manual `npm run deploy` needed — check progress under the repo's **Actions**
+tab. `workflow_dispatch` is enabled too, so you can also trigger a redeploy
+by hand from that tab without a new commit (e.g. after rotating the Supabase
+keys).
 
 ## Protecting `main`
 
