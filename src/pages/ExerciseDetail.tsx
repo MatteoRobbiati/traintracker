@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
 import { useAuth } from "../context/AuthContext";
-import { formatDate } from "../lib/format";
-import { isBetterSet, type BestSetCandidate } from "../lib/personalBest";
+import { formatDate, setVolume } from "../lib/format";
+import { isBetterSet, bestVolumeSession, type BestSetCandidate, type BestVolumeCandidate } from "../lib/personalBest";
 import MuscleMap from "../components/MuscleMap";
 import { MUSCLE_LABELS } from "../constants/muscles";
 import type { Exercise } from "../types/database";
@@ -14,6 +14,7 @@ export default function ExerciseDetail() {
   const navigate = useNavigate();
   const [exercise, setExercise] = useState<Exercise | null>(null);
   const [personalBest, setPersonalBest] = useState<BestSetCandidate | null>(null);
+  const [bestVolume, setBestVolume] = useState<BestVolumeCandidate | null>(null);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -33,20 +34,35 @@ export default function ExerciseDetail() {
 
   useEffect(() => {
     if (!id || !user) return;
-    supabase
-      .from("sets")
-      .select("weight, reps, workout:workouts!inner(date, user_id)")
-      .eq("exercise_id", id)
-      .eq("workout.user_id", user.id)
-      .then(({ data }) => {
-        const isBodyweight = exercise?.is_bodyweight ?? false;
-        let best: BestSetCandidate | null = null;
-        for (const row of (data as any[]) ?? []) {
-          const candidate: BestSetCandidate = { weight: row.weight, reps: row.reps, date: row.workout.date };
-          if (isBetterSet(candidate, best, isBodyweight)) best = candidate;
-        }
-        setPersonalBest(best);
+    Promise.all([
+      supabase
+        .from("sets")
+        .select("workout_id, weight, reps, workout:workouts!inner(date, user_id)")
+        .eq("exercise_id", id)
+        .eq("workout.user_id", user.id),
+      supabase
+        .from("body_weight_logs")
+        .select("weight_kg")
+        .eq("user_id", user.id)
+        .order("recorded_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+    ]).then(([{ data }, { data: bw }]) => {
+      const isBodyweight = exercise?.is_bodyweight ?? false;
+      const bodyWeightKg = bw?.weight_kg ?? null;
+      let best: BestSetCandidate | null = null;
+      const volumeSets = ((data as any[]) ?? []).map((row) => {
+        const candidate: BestSetCandidate = { weight: row.weight, reps: row.reps, date: row.workout.date };
+        if (isBetterSet(candidate, best, isBodyweight)) best = candidate;
+        return {
+          workoutId: row.workout_id,
+          date: row.workout.date,
+          volume: setVolume({ isBodyweight, weight: row.weight, reps: row.reps, bodyWeightKg }),
+        };
       });
+      setPersonalBest(best);
+      setBestVolume(bestVolumeSession(volumeSets));
+    });
     // Depends on exercise.is_bodyweight too, but that's only known once the
     // exercise itself has loaded -- re-runs once it has.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -79,19 +95,34 @@ export default function ExerciseDetail() {
 
       {exercise.description && <p className="muted">{exercise.description}</p>}
 
-      {personalBest && (
-        <div className="panel">
-          <p className="eyebrow" style={{ margin: "0 0 4px" }}>
-            Your personal best
-          </p>
-          <h2 style={{ margin: 0 }}>
-            {exercise.is_bodyweight
-              ? `${personalBest.reps} reps${personalBest.weight ? ` (${personalBest.weight > 0 ? "+" : ""}${personalBest.weight} kg)` : ""}`
-              : `${personalBest.weight} kg × ${personalBest.reps}`}
-          </h2>
-          <p className="muted" style={{ fontSize: 12, margin: "2px 0 0" }}>
-            {formatDate(personalBest.date)}
-          </p>
+      {(personalBest || bestVolume) && (
+        <div className="row" style={{ gap: 12 }}>
+          {personalBest && (
+            <div className="panel" style={{ flex: 1, minWidth: 150 }}>
+              <p className="eyebrow" style={{ margin: "0 0 4px" }}>
+                Best set (massimale)
+              </p>
+              <h2 style={{ margin: 0 }}>
+                {exercise.is_bodyweight
+                  ? `${personalBest.reps} reps${personalBest.weight ? ` (${personalBest.weight > 0 ? "+" : ""}${personalBest.weight} kg)` : ""}`
+                  : `${personalBest.weight} kg × ${personalBest.reps}`}
+              </h2>
+              <p className="muted" style={{ fontSize: 12, margin: "2px 0 0" }}>
+                {formatDate(personalBest.date)}
+              </p>
+            </div>
+          )}
+          {bestVolume && (
+            <div className="panel" style={{ flex: 1, minWidth: 150 }}>
+              <p className="eyebrow" style={{ margin: "0 0 4px" }}>
+                Best session volume
+              </p>
+              <h2 style={{ margin: 0 }}>{bestVolume.volume.toFixed(0)} kg</h2>
+              <p className="muted" style={{ fontSize: 12, margin: "2px 0 0" }}>
+                {formatDate(bestVolume.date)}
+              </p>
+            </div>
+          )}
         </div>
       )}
 

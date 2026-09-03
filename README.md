@@ -104,11 +104,30 @@ lets the owner edit a logged strength workout's weight/reps/rest values
 inline, without leaving the page — the full `/edit` form is still there for
 structural changes (adding/removing whole exercises).
 
-"Personal best" (`src/lib/personalBest.ts`) is the heaviest weight logged
-for a loaded exercise, or the most reps for a bodyweight one (added weight
-as tiebreaker either way) — shown per exercise on its detail page (your own
-data) and as a **Group records** table on the Group page (best among
-everyone whose data you can see, i.e. self + accepted connections).
+Personal bests come in two independent flavors (`src/lib/personalBest.ts`),
+both shown per exercise on its detail page (your own data) and as two
+separate **Group records** tables on the Group page (best among everyone
+whose data you can see, i.e. self + accepted connections):
+- **Massimale** (`isBetterSet`) — the heaviest weight logged for a loaded
+  exercise, or the most reps for a bodyweight one (added weight as
+  tiebreaker either way). One best *set*.
+- **Best session volume** (`bestVolumeSession`) — sets for that exercise
+  are grouped by workout and summed; the highest-total session wins. A
+  session of many lighter sets can out-volume a single heavy set, so it's
+  tracked as its own record instead of being invisible next to the
+  massimale.
+
+The Group page opens with a **Highlights** panel (most active this week,
+longest current streak in the group, combined volume this week, most recent
+new massimale) before the detailed charts/tables below — meant to answer
+"what's been going on" at a glance instead of making everyone read every
+chart to find out.
+
+Group's muscle heat map splits an exercise's volume across its
+`primary_muscles` **and** `secondary_muscles` (secondary at half weight) —
+it used to only look at `primary_muscles`, so a muscle set as secondary on
+every exercise that touches it (e.g. glutes on an exercise like leg
+extension, mostly a quad movement) never showed up at all, not even dimly.
 
 Each exercise block in WorkoutForm has a rest **timer**: "Start rest timer"
 after finishing a set, "Stop & next set" right before the next one — that
