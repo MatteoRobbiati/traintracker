@@ -5,6 +5,7 @@ import { useAuth } from "../context/AuthContext";
 import { formatDate } from "../lib/format";
 import { SPORT_LABELS } from "../constants/sports";
 import { computeStreak } from "../lib/streak";
+import ContributionGraph from "../components/ContributionGraph";
 import type { Workout } from "../types/database";
 
 function sportLabel(sport: string): string {
@@ -20,6 +21,7 @@ export default function Dashboard() {
   const [recentWorkouts, setRecentWorkouts] = useState<RecentWorkout[]>([]);
   const [latestWeight, setLatestWeight] = useState<number | null>(null);
   const [workoutCount, setWorkoutCount] = useState<number | null>(null);
+  const [workoutDates, setWorkoutDates] = useState<string[]>([]);
   const [streak, setStreak] = useState(computeStreak([]));
   const [loading, setLoading] = useState(true);
 
@@ -54,7 +56,9 @@ export default function Dashboard() {
       );
       setLatestWeight(weight?.weight_kg ?? null);
       setWorkoutCount(count ?? 0);
-      setStreak(computeStreak((allDates ?? []).map((w) => w.date)));
+      const dates = (allDates ?? []).map((w) => w.date);
+      setWorkoutDates(dates);
+      setStreak(computeStreak(dates));
       setLoading(false);
     }
     load();
@@ -79,22 +83,26 @@ export default function Dashboard() {
         </Link>
       </div>
 
-      <div className="row" style={{ gap: 12, marginBottom: 20 }}>
-        <div className="panel" style={{ flex: 1 }}>
-          <p className="eyebrow">Streak</p>
-          <h2>
-            {streak.current > 0 ? `${streak.current} 🔥` : streak.brokenDaysAgo != null ? "0" : "—"}
-          </h2>
-          <p className="muted" style={{ fontSize: 12, margin: 0 }}>
-            {streak.current > 0
-              ? streak.onRestDay
-                ? "Train today to keep it going."
-                : `Best: ${streak.longest}`
-              : streak.brokenDaysAgo != null
-                ? `Broke ${streak.brokenDaysAgo} days ago — start a new one!`
-                : "Log a workout to start one."}
-          </p>
+      <div className="panel" style={{ marginBottom: 20 }}>
+        <div className="row between" style={{ marginBottom: 12 }}>
+          <h3 style={{ margin: 0 }}>Activity</h3>
+          <span className="muted" style={{ fontSize: 12 }}>
+            {streak.current > 0 ? `🔥 ${streak.current}-day streak` : "No active streak"} · Best {streak.longest}
+          </span>
         </div>
+        <ContributionGraph dates={workoutDates} />
+        <p className="muted" style={{ fontSize: 12, margin: "10px 0 0" }}>
+          {streak.current > 0
+            ? streak.onRestDay
+              ? "Resting today keeps the streak — train tomorrow to keep it going."
+              : "Trained today — keep it up."
+            : streak.brokenDaysAgo != null
+              ? `Streak broke ${streak.brokenDaysAgo} days ago — one workout starts a new one.`
+              : "Log a workout to start a streak. One rest day in a row won't break it."}
+        </p>
+      </div>
+
+      <div className="row" style={{ gap: 12, marginBottom: 20 }}>
         <div className="panel" style={{ flex: 1 }}>
           <p className="eyebrow">Latest body weight</p>
           <h2>{latestWeight != null ? `${latestWeight} kg` : "—"}</h2>

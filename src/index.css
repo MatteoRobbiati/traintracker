@@ -241,6 +241,25 @@ table td input, table td select { padding: 6px 8px; min-width: 0; }
 .swatch.secondary { background: var(--ember-muted); border-color: var(--ember-muted); }
 .swatch.none { background: var(--stone); }
 
+/* Contribution graph (Dashboard "Activity") */
+.cg-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 2px; }
+.cg-grid { display: flex; gap: 3px; width: max-content; }
+.cg-col { display: flex; flex-direction: column; gap: 3px; }
+.cg-month-label {
+  height: 14px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10px;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+.cg-cell { width: 11px; height: 11px; border-radius: 3px; background: var(--stone); flex: none; }
+.cg-cell.cg-empty { background: transparent; }
+.cg-cell.cg-l1 { background: var(--ember-muted); }
+.cg-cell.cg-l2 { background: color-mix(in srgb, var(--ember) 60%, var(--ember-muted)); }
+.cg-cell.cg-l3 { background: var(--ember); }
+.cg-legend { display: flex; align-items: center; gap: 4px; margin-top: 8px; font-size: 11px; color: var(--ink-soft); }
+.cg-legend .cg-cell { width: 10px; height: 10px; }
+
 /* Nav */
 .top-nav {
   display: flex;
@@ -365,19 +384,24 @@ button.linklike { background: none; border: none; cursor: pointer; }
 }
 .chat-panel-rooms {
   display: flex;
-  gap: 4px;
-  padding: 8px 10px 0;
+  gap: 6px;
+  padding: 8px 10px;
   overflow-x: auto;
+  border-bottom: 1px solid var(--line);
 }
 .chat-room-tab {
   background: none;
-  border: none;
+  border: none; /* button{} sets a 1px solid border globally -- without this
+                   reset every pill got a stray grey ring around it, mismatched
+                   with the orange fill on .active. That's the "renders badly"
+                   look. */
   border-radius: 999px;
   padding: 6px 12px;
   font-size: 12px;
   font-weight: 500;
   color: var(--ink-soft);
   white-space: nowrap;
+  flex: none;
   cursor: pointer;
 }
 .chat-room-tab:hover { background: var(--paper); }

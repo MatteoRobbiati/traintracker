@@ -1,13 +1,14 @@
 import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useConnections } from "../hooks/useConnections";
-import { DashboardIcon, ExercisesIcon, WorkoutsIcon, ChatIcon, GroupIcon, ProfileIcon } from "./icons";
+import { DashboardIcon, ExercisesIcon, WorkoutsIcon, ChatIcon, GroupIcon, FriendsIcon, ProfileIcon } from "./icons";
 
 const LINKS = [
   { to: "/", label: "Dashboard", Icon: DashboardIcon },
   { to: "/exercises", label: "Exercises", Icon: ExercisesIcon },
   { to: "/workouts", label: "Workouts", Icon: WorkoutsIcon },
   { to: "/group", label: "Group", Icon: GroupIcon },
+  { to: "/connections", label: "Friends", Icon: FriendsIcon },
   { to: "/profile", label: "Profile", Icon: ProfileIcon },
 ];
 
@@ -36,7 +37,7 @@ export default function Nav({ chatOpen, onToggleChat }: NavProps) {
           {LINKS.map((l) => (
             <NavLink key={l.to} to={l.to} end={l.to === "/"}>
               {l.label}
-              {l.to === "/profile" && incomingRequests > 0 && (
+              {l.to === "/connections" && incomingRequests > 0 && (
                 <span className="chip focus" style={{ marginLeft: 6, padding: "1px 6px" }}>
                   {incomingRequests}
                 </span>
@@ -79,7 +80,7 @@ export default function Nav({ chatOpen, onToggleChat }: NavProps) {
           <NavLink key={l.to} to={l.to} end={l.to === "/"} className="bottom-nav-item">
             <span style={{ position: "relative" }}>
               <l.Icon />
-              {l.to === "/profile" && incomingRequests > 0 && (
+              {l.to === "/connections" && incomingRequests > 0 && (
                 <span className="bottom-nav-badge">{incomingRequests}</span>
               )}
             </span>
