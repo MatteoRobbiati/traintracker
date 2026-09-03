@@ -288,8 +288,7 @@ export default function Group() {
         </div>
       )}
 
-      {enriched.length > 0 && (
-        <div className="panel">
+      <div className="panel">
           <div className="row between">
             <h3>Muscle heat</h3>
             <select value={muscleUserFilter} onChange={(e) => setMuscleUserFilter(e.target.value)} style={{ width: "auto" }}>
@@ -325,8 +324,7 @@ export default function Group() {
               </div>
             </>
           )}
-        </div>
-      )}
+      </div>
 
       {enriched.length > 0 && (
         <div className="panel">

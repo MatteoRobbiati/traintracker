@@ -28,6 +28,29 @@ function emptySet(): SetRow {
   return { weight: "0", reps: "", restSeconds: "" };
 }
 
+// Prefills a newly added block from the sets logged last time this user did
+// this exercise, so re-adding "Bench Press" starts from what was actually
+// lifted last time instead of blank fields.
+async function fetchLastSets(userId: string, exerciseId: string): Promise<SetRow[]> {
+  const { data } = await supabase
+    .from("sets")
+    .select("workout_id, weight, reps, rest_time_seconds, set_order, workout:workouts!inner(date, user_id)")
+    .eq("exercise_id", exerciseId)
+    .eq("workout.user_id", userId)
+    .order("date", { foreignTable: "workout", ascending: false })
+    .order("set_order", { ascending: true })
+    .limit(30);
+
+  if (!data || data.length === 0) return [emptySet()];
+  const latestWorkoutId = (data[0] as any).workout_id;
+  const rows = (data as any[]).filter((r) => r.workout_id === latestWorkoutId);
+  return rows.map((r) => ({
+    weight: String(r.weight),
+    reps: String(r.reps),
+    restSeconds: r.rest_time_seconds != null ? String(r.rest_time_seconds) : "",
+  }));
+}
+
 const OTHER_SPORT = "other";
 
 export default function WorkoutForm() {
@@ -131,16 +154,20 @@ export default function WorkoutForm() {
     load();
   }, [id]);
 
-  function addBlock() {
-    if (exerciseOptions.length === 0) return;
-    setBlocks((prev) => [
-      ...prev,
-      { key: crypto.randomUUID(), exerciseId: exerciseOptions[0].id, sets: [emptySet()] },
-    ]);
+  async function addBlock() {
+    if (exerciseOptions.length === 0 || !user) return;
+    const exerciseId = exerciseOptions[0].id;
+    const key = crypto.randomUUID();
+    setBlocks((prev) => [...prev, { key, exerciseId, sets: [emptySet()] }]);
+    const sets = await fetchLastSets(user.id, exerciseId);
+    setBlocks((prev) => prev.map((b) => (b.key === key ? { ...b, sets } : b)));
   }
 
-  function updateBlock(key: string, exerciseId: string) {
+  async function updateBlock(key: string, exerciseId: string) {
     setBlocks((prev) => prev.map((b) => (b.key === key ? { ...b, exerciseId } : b)));
+    if (!user) return;
+    const sets = await fetchLastSets(user.id, exerciseId);
+    setBlocks((prev) => prev.map((b) => (b.key === key ? { ...b, sets } : b)));
   }
 
   function removeBlock(key: string) {
@@ -314,12 +341,7 @@ export default function WorkoutForm() {
             </div>
 
             <div>
-              <div className="row between">
-                <h3>Exercises</h3>
-                <button type="button" onClick={addBlock} disabled={exerciseOptions.length === 0}>
-                  + Add exercise
-                </button>
-              </div>
+              <h3>Exercises</h3>
               {exerciseOptions.length === 0 && (
                 <p className="muted">No exercises in the library yet — add one first.</p>
               )}
@@ -342,7 +364,8 @@ export default function WorkoutForm() {
                         </button>
                       </div>
 
-                      <table style={{ marginTop: 10 }}>
+                      <div className="table-scroll" style={{ marginTop: 10 }}>
+                      <table>
                         <thead>
                           <tr>
                             <th>{exercise?.is_bodyweight ? "Added weight" : "Weight"}</th>
@@ -398,6 +421,7 @@ export default function WorkoutForm() {
                           })}
                         </tbody>
                       </table>
+                      </div>
                       <button
                         type="button"
                         className="ghost"
@@ -415,6 +439,15 @@ export default function WorkoutForm() {
                   );
                 })}
               </div>
+
+              <button
+                type="button"
+                onClick={addBlock}
+                disabled={exerciseOptions.length === 0}
+                style={{ marginTop: 12 }}
+              >
+                + Add exercise
+              </button>
             </div>
           </>
         ) : (

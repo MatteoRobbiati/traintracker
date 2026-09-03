@@ -96,7 +96,20 @@ visible to everyone with an account, not gated by connections.
 ## Deploying to GitHub Pages
 
 `vite.config.ts` sets `base: "/traintracker/"` — update that first if your repo
-has a different name.
+has a different name, and also update `pathSegmentsToKeep` in
+[`public/404.html`](public/404.html) (see next paragraph) to match how many
+path segments that new base has.
+
+GitHub Pages has no server-side routing, so refreshing (or opening a shared
+link to) any deep route — `/traintracker/workouts/123` — 404s at the actual
+HTTP level; there's no server to fall back to `index.html` the way `vite dev`
+or a real host would. `public/404.html` + the inline script in `index.html`
+are the standard workaround
+([rafgraph/spa-github-pages](https://github.com/rafgraph/spa-github-pages)):
+GitHub serves `404.html` for the unmatched path, which redirects to the real
+`index.html` with the intended path encoded in the query string; `index.html`
+decodes it back via `history.replaceState` before React Router ever reads
+the URL. Don't remove either half on its own.
 
 ```sh
 git remote add origin git@github.com:<you>/traintracker.git

@@ -32,7 +32,7 @@ export default function Signup() {
 
   return (
     <div className="app-main" style={{ maxWidth: 380, marginTop: 60 }}>
-      <p className="eyebrow">Gym Tracker</p>
+      <p className="eyebrow">TrainTrack</p>
       <h1>Sign up</h1>
       {done ? (
         <p className="panel">Account created — check your email if confirmation is required, then log in.</p>

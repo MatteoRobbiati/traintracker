@@ -28,7 +28,7 @@ export default function Nav({ chatOpen, onToggleChat }: NavProps) {
   return (
     <>
       <nav className="top-nav">
-        <span className="brand">Gym Tracker</span>
+        <span className="brand">TrainTrack</span>
         <div className="nav-links row">
           {LINKS.map((l) => (
             <NavLink key={l.to} to={l.to} end={l.to === "/"}>
