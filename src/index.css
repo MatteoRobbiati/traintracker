@@ -207,6 +207,41 @@ table td input, table td select { padding: 6px 8px; min-width: 0; }
 
 .muted { color: var(--ink-soft); }
 
+/* Searchable select -- a text input + filtered dropdown standing in for a
+   native <select> once the option list (e.g. the exercise library) can grow
+   past what's comfortable to scroll through blind. */
+.searchable-select { position: relative; flex: 1; min-width: 0; }
+.searchable-select input { width: 100%; }
+.searchable-select-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  max-height: 220px;
+  overflow-y: auto;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+  padding: 4px;
+}
+.searchable-select-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: 7px;
+  padding: 8px 10px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ink);
+  cursor: pointer;
+}
+.searchable-select-option:hover, .searchable-select-option.active { background: var(--paper); }
+.searchable-select-empty { padding: 8px 10px; font-size: 13px; }
+
 /* Muscle map */
 .muscle { fill: var(--stone); stroke: var(--stone-line); stroke-width: 2.4; stroke-linejoin: round; transition: fill 0.2s ease; }
 .muscle.is-secondary { fill: var(--ember-muted); stroke: var(--ember-muted); }
@@ -254,8 +289,11 @@ table td input, table td select { padding: 6px 8px; min-width: 0; }
 }
 .cg-cell { width: 11px; height: 11px; border-radius: 3px; background: var(--stone); flex: none; }
 .cg-cell.cg-empty { background: transparent; }
-.cg-cell.cg-l1 { background: var(--ember-muted); }
-.cg-cell.cg-l2 { background: color-mix(in srgb, var(--ember) 60%, var(--ember-muted)); }
+/* Mixed against --stone (the neutral base of an empty cell) rather than
+   --ember-muted's pastel tint, so even the lightest "trained" level reads as
+   a clearly saturated step up from empty, not a wash. */
+.cg-cell.cg-l1 { background: color-mix(in srgb, var(--ember) 45%, var(--stone)); }
+.cg-cell.cg-l2 { background: color-mix(in srgb, var(--ember) 75%, var(--stone)); }
 .cg-cell.cg-l3 { background: var(--ember); }
 .cg-legend { display: flex; align-items: center; gap: 4px; margin-top: 8px; font-size: 11px; color: var(--ink-soft); }
 .cg-legend .cg-cell { width: 10px; height: 10px; }
@@ -382,30 +420,31 @@ button.linklike { background: none; border: none; cursor: pointer; }
   padding: 14px 14px 10px;
   border-bottom: 1px solid var(--line);
 }
+/* flex-wrap (not overflow-x: auto) -- with only a handful of rooms, wrapping
+   to a second line keeps every room visible and tappable at once instead of
+   hiding some behind a horizontal scroll a thumb has to discover first. */
 .chat-panel-rooms {
   display: flex;
-  gap: 6px;
-  padding: 8px 10px;
-  overflow-x: auto;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px;
   border-bottom: 1px solid var(--line);
 }
 .chat-room-tab {
-  background: none;
-  border: none; /* button{} sets a 1px solid border globally -- without this
-                   reset every pill got a stray grey ring around it, mismatched
-                   with the orange fill on .active. That's the "renders badly"
-                   look. */
+  background: var(--paper);
+  border: 1px solid var(--line); /* a real chip outline, not just plain text,
+                                     so each room reads as a distinct,
+                                     selectable option. */
   border-radius: 999px;
-  padding: 6px 12px;
+  padding: 6px 13px;
   font-size: 12px;
   font-weight: 500;
   color: var(--ink-soft);
   white-space: nowrap;
-  flex: none;
   cursor: pointer;
 }
-.chat-room-tab:hover { background: var(--paper); }
-.chat-room-tab.active { background: var(--ember); color: #fff; }
+.chat-room-tab:hover { background: var(--paper-raised); border-color: var(--stone-line); }
+.chat-room-tab.active { background: var(--ember); border-color: var(--ember); color: #fff; }
 .chat-panel-online {
   padding: 10px 14px;
   border-bottom: 1px solid var(--line);

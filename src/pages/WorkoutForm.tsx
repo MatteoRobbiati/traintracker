@@ -5,6 +5,7 @@ import { useAuth } from "../context/AuthContext";
 import { setVolume } from "../lib/format";
 import { SPORTS, SPORT_LABELS, CLIMBING_DISCIPLINES, CLIMBING_DISCIPLINE_LABELS } from "../constants/sports";
 import { saveWorkoutAsTemplate } from "../lib/templates";
+import SearchableSelect from "../components/SearchableSelect";
 import type { WorkoutTemplate, WorkoutType } from "../types/database";
 
 interface ExerciseOption {
@@ -555,13 +556,12 @@ export default function WorkoutForm() {
                   return (
                     <div key={block.key} className="panel">
                       <div className="row between">
-                        <select value={block.exerciseId} onChange={(e) => updateBlock(block.key, e.target.value)}>
-                          {exerciseOptions.map((e) => (
-                            <option key={e.id} value={e.id}>
-                              {e.name}
-                            </option>
-                          ))}
-                        </select>
+                        <SearchableSelect
+                          options={exerciseOptions.map((e) => ({ id: e.id, label: e.name }))}
+                          value={block.exerciseId}
+                          onChange={(exerciseId) => updateBlock(block.key, exerciseId)}
+                          placeholder="Search exercises…"
+                        />
                         <button type="button" className="ghost" onClick={() => removeBlock(block.key)}>
                           Remove
                         </button>

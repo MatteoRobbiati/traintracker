@@ -1,11 +1,21 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { supabase } from "../lib/supabaseClient";
 import { useAuth } from "../context/AuthContext";
+import { useTheme } from "../context/ThemeContext";
+import { ACCENTS } from "../lib/theme";
 import { formatDate } from "../lib/format";
 import type { BodyWeightLog } from "../types/database";
+import type { ThemeMode } from "../lib/theme";
+
+const MODES: { id: ThemeMode; label: string }[] = [
+  { id: "system", label: "System" },
+  { id: "light", label: "Light" },
+  { id: "dark", label: "Dark" },
+];
 
 export default function Profile() {
   const { user, profile } = useAuth();
+  const { mode, accent, setMode, setAccent } = useTheme();
   const [logs, setLogs] = useState<BodyWeightLog[]>([]);
   const [weight, setWeight] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -48,6 +58,49 @@ export default function Profile() {
   return (
     <div>
       <h1>{profile?.name ?? "Profile"}</h1>
+
+      <div className="panel">
+        <h3>Appearance</h3>
+        <div className="field" style={{ marginBottom: 14 }}>
+          <label>Theme</label>
+          <div className="row">
+            {MODES.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                className={mode === m.id ? "primary" : ""}
+                onClick={() => setMode(m.id)}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="field">
+          <label>Accent color</label>
+          <div className="row" style={{ gap: 10 }}>
+            {ACCENTS.map((a) => (
+              <button
+                key={a.id}
+                type="button"
+                aria-label={a.label}
+                aria-pressed={accent === a.id}
+                onClick={() => setAccent(a.id)}
+                title={a.label}
+                style={{
+                  width: 34,
+                  height: 34,
+                  padding: 0,
+                  borderRadius: "50%",
+                  background: a.swatch,
+                  border: accent === a.id ? "3px solid var(--ink)" : "3px solid transparent",
+                  boxShadow: accent === a.id ? "none" : "0 0 0 1px var(--line)",
+                }}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
 
       <div className="panel">
         <h3>Log body weight</h3>

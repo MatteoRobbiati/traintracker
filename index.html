@@ -22,6 +22,37 @@
         }
       })(window.location);
     </script>
+    <script>
+      // Apply the saved theme/accent before first paint, so there's no
+      // flash of the default light/ember colors before React mounts and
+      // ThemeContext (src/context/ThemeContext.tsx) takes over. Palette
+      // values here must stay in sync with ACCENT_PALETTES in
+      // src/lib/theme.ts.
+      (function () {
+        try {
+          var theme = localStorage.getItem("traintrack:theme");
+          var accent = localStorage.getItem("traintrack:accent") || "ember";
+          var root = document.documentElement;
+          if (theme === "light" || theme === "dark") root.setAttribute("data-theme", theme);
+          var isDark =
+            theme === "dark" ||
+            (theme !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+          var palettes = {
+            ember: { l: ["#D9531E", "#EEC0A4", "#1E6E62"], d: ["#FF6C39", "#5A392C", "#4FBDA8"] },
+            ocean: { l: ["#1D6FE0", "#BBD6F7", "#0E9488"], d: ["#5B9DFF", "#1E3A5C", "#37C9B8"] },
+            forest: { l: ["#2F7D42", "#BFE3C5", "#B5541E"], d: ["#4FCE6B", "#234A2E", "#E08A4A"] },
+            grape: { l: ["#7A3FC9", "#DCC9F5", "#C2622A"], d: ["#B98CF0", "#3B2A55", "#E08A4A"] },
+            rose: { l: ["#C13566", "#F2C4D6", "#2E7D6B"], d: ["#F06B99", "#4A2333", "#4FBDA8"] },
+          };
+          var p = (palettes[accent] || palettes.ember)[isDark ? "d" : "l"];
+          root.style.setProperty("--ember", p[0]);
+          root.style.setProperty("--ember-muted", p[1]);
+          root.style.setProperty("--focus", p[2]);
+        } catch (e) {
+          /* ignore */
+        }
+      })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
