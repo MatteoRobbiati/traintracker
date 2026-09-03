@@ -4,6 +4,7 @@ import { supabase } from "../lib/supabaseClient";
 import { useAuth } from "../context/AuthContext";
 import { formatDate } from "../lib/format";
 import { SPORT_LABELS } from "../constants/sports";
+import { computeStreak } from "../lib/streak";
 import type { Workout } from "../types/database";
 
 function sportLabel(sport: string): string {
@@ -19,6 +20,7 @@ export default function Dashboard() {
   const [recentWorkouts, setRecentWorkouts] = useState<RecentWorkout[]>([]);
   const [latestWeight, setLatestWeight] = useState<number | null>(null);
   const [workoutCount, setWorkoutCount] = useState<number | null>(null);
+  const [streak, setStreak] = useState(computeStreak([]));
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -26,7 +28,7 @@ export default function Dashboard() {
     let cancelled = false;
 
     async function load() {
-      const [{ data: workouts }, { data: weight }, { count }] = await Promise.all([
+      const [{ data: workouts }, { data: weight }, { count }, { data: allDates }] = await Promise.all([
         supabase
           .from("workouts")
           .select("*, endurance_details(sport)")
@@ -44,6 +46,7 @@ export default function Dashboard() {
           .from("workouts")
           .select("*", { count: "exact", head: true })
           .eq("user_id", user!.id),
+        supabase.from("workouts").select("date").eq("user_id", user!.id),
       ]);
       if (cancelled) return;
       setRecentWorkouts(
@@ -51,6 +54,7 @@ export default function Dashboard() {
       );
       setLatestWeight(weight?.weight_kg ?? null);
       setWorkoutCount(count ?? 0);
+      setStreak(computeStreak((allDates ?? []).map((w) => w.date)));
       setLoading(false);
     }
     load();
@@ -76,6 +80,21 @@ export default function Dashboard() {
       </div>
 
       <div className="row" style={{ gap: 12, marginBottom: 20 }}>
+        <div className="panel" style={{ flex: 1 }}>
+          <p className="eyebrow">Streak</p>
+          <h2>
+            {streak.current > 0 ? `${streak.current} 🔥` : streak.brokenDaysAgo != null ? "0" : "—"}
+          </h2>
+          <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+            {streak.current > 0
+              ? streak.onRestDay
+                ? "Train today to keep it going."
+                : `Best: ${streak.longest}`
+              : streak.brokenDaysAgo != null
+                ? `Broke ${streak.brokenDaysAgo} days ago — start a new one!`
+                : "Log a workout to start one."}
+          </p>
+        </div>
         <div className="panel" style={{ flex: 1 }}>
           <p className="eyebrow">Latest body weight</p>
           <h2>{latestWeight != null ? `${latestWeight} kg` : "—"}</h2>

@@ -62,8 +62,9 @@ Use this link to start logging: [https://matteorobbiati.github.io/traintracker/l
 | `/` | Dashboard — recent workouts, latest body weight, quick actions |
 | `/exercises`, `/exercises/new`, `/exercises/:id`, `/exercises/:id/edit` | Shared exercise library |
 | `/workouts`, `/workouts/new`, `/workouts/:id`, `/workouts/:id/edit` | Personal workout log + history |
-| `/group` | Recharts: weekly volume, workout frequency, muscle distribution, per-exercise comparison |
-| `/profile` | Body weight log, group "last seen" list, and connection requests |
+| `/group` | Recharts: weekly volume, workout frequency, muscle distribution, per-exercise comparison, group records |
+| `/profile` | Body weight log; links to `/connections` |
+| `/connections` | Group member list, "last seen", and connection requests (was folded into Profile, split out for room to grow) |
 
 Bodyweight-exercise volume is computed as `(latest body weight + added weight) × reps`;
 loaded exercises are `weight × reps`. Added weight may be negative for
@@ -81,6 +82,15 @@ Chat is split into topic rooms (`src/constants/rooms.ts`: General, Gym,
 Climbing, Bodyweight, Running) — a fixed list for now, not user-creatable.
 Adding a room is a pure frontend change (no DB migration): `room` on
 `messages` isn't CHECK-constrained.
+
+Dashboard shows a training **streak** (`src/lib/streak.ts`) — deliberately
+not the Duolingo kind: one rest day never breaks it, only a *second*
+consecutive untrained day does (train → rest → train keeps counting; train →
+rest → rest doesn't). Computed client-side from workout dates, no schema for
+it. The day-number math goes through `Date.UTC` on parsed Y/M/D components on
+both sides (today and each logged date) rather than mixing a parsed-as-local
+date string against a raw `Date.now()` instant — the latter is off by one in
+any UTC+ timezone once local midnight rounds into the previous UTC day.
 
 Both WorkoutForm (while building a new/edited workout) and WorkoutDetail
 (for one already logged) can save the current fields as a named, private
