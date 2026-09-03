@@ -16,6 +16,7 @@ import {
 import { supabase } from "../lib/supabaseClient";
 import { formatDate, setVolume } from "../lib/format";
 import { isBetterSet, type BestSetCandidate } from "../lib/personalBest";
+import { computeStreak } from "../lib/streak";
 import MuscleMap from "../components/MuscleMap";
 import type { Muscle } from "../constants/muscles";
 
@@ -24,10 +25,17 @@ import type { Muscle } from "../constants/muscles";
 const PALETTE = ["#D9531E", "#1E6E62", "#4C6EF5", "#C2410C", "#7C5CBF", "#0E7490", "#B3261E", "#6B7280"];
 
 interface SetRow {
+  workout_id: string;
   weight: number;
   reps: number;
   workout: { user_id: string; date: string } | null;
-  exercise: { id: string; name: string; is_bodyweight: boolean; primary_muscles: Muscle[] } | null;
+  exercise: {
+    id: string;
+    name: string;
+    is_bodyweight: boolean;
+    primary_muscles: Muscle[];
+    secondary_muscles: Muscle[];
+  } | null;
 }
 
 interface WeightLog {
@@ -63,7 +71,9 @@ export default function Group() {
         supabase.from("profiles").select("id, name"),
         supabase
           .from("sets")
-          .select("weight, reps, workout:workouts(user_id, date), exercise:exercises(id, name, is_bodyweight, primary_muscles)"),
+          .select(
+            "workout_id, weight, reps, workout:workouts(user_id, date), exercise:exercises(id, name, is_bodyweight, primary_muscles, secondary_muscles)"
+          ),
         supabase
           .from("body_weight_logs")
           .select("user_id, weight_kg, recorded_at")
@@ -100,9 +110,14 @@ export default function Group() {
           userName: profileNames[r.workout!.user_id] ?? "Unknown",
           date: r.workout!.date,
           week: isoWeekLabel(r.workout!.date),
+          workoutId: r.workout_id,
           exerciseId: r.exercise!.id,
           exerciseName: r.exercise!.name,
+          isBodyweight: r.exercise!.is_bodyweight,
+          weight: r.weight,
+          reps: r.reps,
           primaryMuscles: r.exercise!.primary_muscles,
+          secondaryMuscles: r.exercise!.secondary_muscles,
           volume: setVolume({
             isBodyweight: r.exercise!.is_bodyweight,
             weight: r.weight,
@@ -161,22 +176,28 @@ export default function Group() {
       .map(([date, values]) => ({ date, ...values }));
   }, [weightLogs, profileNames]);
 
-  // Muscle heat: volume split evenly across an exercise's primary muscles,
-  // normalized 0..1 against the most-trained muscle for the figure. Scoped
-  // to a rolling window by default -- an all-time total barely moves for
-  // one new session once there's weeks of history behind it, which reads
+  // Muscle heat: volume split across an exercise's primary AND secondary
+  // muscles (secondary at half weight -- a stabilizer/assistant shouldn't
+  // read as heavily trained as the actual target), normalized 0..1 against
+  // the most-trained muscle for the figure. A muscle set only as secondary
+  // on every exercise that touches it (e.g. glutes on a mostly-quad exercise
+  // like leg extension) still needs to show up here, just dimmer -- it used
+  // to be dropped entirely because this only looked at primary_muscles.
+  // Scoped to a rolling window by default -- an all-time total barely moves
+  // for one new session once there's weeks of history behind it, which reads
   // as "nothing changed" even though it did.
+  const SECONDARY_WEIGHT = 0.5;
   const muscleIntensities = useMemo(() => {
     const cutoff = muscleRangeDays === 0 ? null : new Date(Date.now() - muscleRangeDays * 86400000);
     const totals = new Map<Muscle, number>();
     for (const r of enriched) {
       if (muscleUserFilter && r.userName !== muscleUserFilter) continue;
       if (cutoff && new Date(r.date + "T00:00:00") < cutoff) continue;
-      if (r.primaryMuscles.length === 0) continue;
-      const share = r.volume / r.primaryMuscles.length;
-      for (const m of r.primaryMuscles) {
-        totals.set(m, (totals.get(m) ?? 0) + share);
-      }
+      const totalWeight = r.primaryMuscles.length + r.secondaryMuscles.length * SECONDARY_WEIGHT;
+      if (totalWeight === 0) continue;
+      const unit = r.volume / totalWeight;
+      for (const m of r.primaryMuscles) totals.set(m, (totals.get(m) ?? 0) + unit);
+      for (const m of r.secondaryMuscles) totals.set(m, (totals.get(m) ?? 0) + unit * SECONDARY_WEIGHT);
     }
     const max = Math.max(0, ...totals.values());
     const result: Partial<Record<Muscle, number>> = {};
@@ -211,27 +232,99 @@ export default function Group() {
     if (!selectedExercise && exerciseOptions.length > 0) setSelectedExercise(exerciseOptions[0]);
   }, [exerciseOptions, selectedExercise]);
 
-  // Group records: best set ever logged per exercise, and who holds it --
-  // across everyone whose data is visible (self + accepted connections,
-  // same as everything else on this page; RLS already scoped `rows`).
+  // Group records: best set ever logged per exercise ("massimale"), and who
+  // holds it -- across everyone whose data is visible (self + accepted
+  // connections, same as everything else on this page).
   const groupRecords = useMemo(() => {
     const best = new Map<string, { best: BestSetCandidate; holder: string; isBodyweight: boolean }>();
-    for (const r of rows) {
-      if (!r.workout || !r.exercise) continue;
-      const candidate: BestSetCandidate = { weight: r.weight, reps: r.reps, date: r.workout.date };
-      const current = best.get(r.exercise.name);
-      if (!current || isBetterSet(candidate, current.best, r.exercise.is_bodyweight)) {
-        best.set(r.exercise.name, {
-          best: candidate,
-          holder: profileNames[r.workout.user_id] ?? "Unknown",
-          isBodyweight: r.exercise.is_bodyweight,
-        });
+    for (const r of enriched) {
+      const candidate: BestSetCandidate = { weight: r.weight, reps: r.reps, date: r.date };
+      const current = best.get(r.exerciseName);
+      if (!current || isBetterSet(candidate, current.best, r.isBodyweight)) {
+        best.set(r.exerciseName, { best: candidate, holder: r.userName, isBodyweight: r.isBodyweight });
       }
     }
     return Array.from(best.entries())
       .map(([exerciseName, v]) => ({ exerciseName, ...v }))
       .sort((a, b) => a.exerciseName.localeCompare(b.exerciseName));
-  }, [rows, profileNames]);
+  }, [enriched]);
+
+  // Group volume records: best single-session total per exercise -- a
+  // separate kind of record from "massimale" above (see
+  // src/lib/personalBest.ts), so a many-lighter-sets session can hold its
+  // own record instead of being invisible next to the heaviest single set.
+  const groupVolumeRecords = useMemo(() => {
+    const byExercise = new Map<string, { workoutId: string; date: string; volume: number; holder: string }[]>();
+    for (const r of enriched) {
+      const list = byExercise.get(r.exerciseName) ?? [];
+      list.push({ workoutId: r.workoutId, date: r.date, volume: r.volume, holder: r.userName });
+      byExercise.set(r.exerciseName, list);
+    }
+    const result: { exerciseName: string; volume: number; holder: string; date: string }[] = [];
+    for (const [exerciseName, sets] of byExercise) {
+      const bySession = new Map<string, { volume: number; date: string; holder: string }>();
+      for (const s of sets) {
+        const key = `${s.holder}|${s.workoutId}`;
+        const entry = bySession.get(key);
+        if (entry) entry.volume += s.volume;
+        else bySession.set(key, { volume: s.volume, date: s.date, holder: s.holder });
+      }
+      let best: { volume: number; date: string; holder: string } | null = null;
+      for (const v of bySession.values()) {
+        if (!best || v.volume > best.volume) best = v;
+      }
+      if (best) result.push({ exerciseName, ...best });
+    }
+    return result.sort((a, b) => a.exerciseName.localeCompare(b.exerciseName));
+  }, [enriched]);
+
+  // Group highlights: a handful of at-a-glance cards summarizing "what's
+  // going on" instead of making everyone read every chart below to find out.
+  const highlights = useMemo(() => {
+    const weekCutoff = new Date();
+    weekCutoff.setDate(weekCutoff.getDate() - 7);
+    const thisWeek = enriched.filter((r) => new Date(r.date + "T00:00:00") >= weekCutoff);
+
+    // Most active this week: distinct workout-days per person.
+    const daysByUser = new Map<string, Set<string>>();
+    for (const r of thisWeek) {
+      const set = daysByUser.get(r.userName) ?? new Set<string>();
+      set.add(r.date);
+      daysByUser.set(r.userName, set);
+    }
+    let mostActive: { name: string; count: number } | null = null;
+    for (const [name, days] of daysByUser) {
+      if (!mostActive || days.size > mostActive.count) mostActive = { name, count: days.size };
+    }
+
+    // Longest current streak among everyone visible (rest-day-tolerant, see
+    // src/lib/streak.ts) -- same rule as the personal Dashboard streak.
+    const datesByUser = new Map<string, string[]>();
+    for (const r of enriched) {
+      const list = datesByUser.get(r.userName) ?? [];
+      list.push(r.date);
+      datesByUser.set(r.userName, list);
+    }
+    let longestStreak: { name: string; current: number } | null = null;
+    for (const [name, dates] of datesByUser) {
+      const s = computeStreak(dates);
+      if (s.current > 0 && (!longestStreak || s.current > longestStreak.current)) {
+        longestStreak = { name, current: s.current };
+      }
+    }
+
+    // Total group volume this week.
+    const weekVolume = thisWeek.reduce((sum, r) => sum + r.volume, 0);
+
+    // Most recent new "massimale" record, among the ones already computed.
+    let latestPb: { exerciseName: string; holder: string; best: BestSetCandidate; isBodyweight: boolean } | null =
+      null;
+    for (const r of groupRecords) {
+      if (!latestPb || r.best.date > latestPb.best.date) latestPb = r;
+    }
+
+    return { mostActive, longestStreak, weekVolume, latestPb };
+  }, [enriched, groupRecords]);
 
   if (loading) return <p className="muted">Loading…</p>;
   if (enriched.length === 0 && weightLogs.length === 0)
@@ -245,6 +338,50 @@ export default function Group() {
   return (
     <div className="stack" style={{ gap: 16 }}>
       <h1>Group</h1>
+
+      {enriched.length > 0 && (
+        <div className="panel">
+          <h3 style={{ marginBottom: 12 }}>✨ Highlights</h3>
+          <div className="highlight-grid">
+            {highlights.mostActive && (
+              <div className="highlight-card">
+                <p className="eyebrow" style={{ margin: "0 0 4px" }}>🏆 Most active (7d)</p>
+                <h2 style={{ margin: 0 }}>{highlights.mostActive.name}</h2>
+                <p className="muted" style={{ fontSize: 12, margin: "2px 0 0" }}>
+                  {highlights.mostActive.count} workout day{highlights.mostActive.count === 1 ? "" : "s"}
+                </p>
+              </div>
+            )}
+            {highlights.longestStreak && (
+              <div className="highlight-card">
+                <p className="eyebrow" style={{ margin: "0 0 4px" }}>🔥 Longest streak</p>
+                <h2 style={{ margin: 0 }}>{highlights.longestStreak.name}</h2>
+                <p className="muted" style={{ fontSize: 12, margin: "2px 0 0" }}>
+                  {highlights.longestStreak.current} day{highlights.longestStreak.current === 1 ? "" : "s"}
+                </p>
+              </div>
+            )}
+            <div className="highlight-card">
+              <p className="eyebrow" style={{ margin: "0 0 4px" }}>📦 Group volume (7d)</p>
+              <h2 style={{ margin: 0 }}>{highlights.weekVolume.toFixed(0)} kg</h2>
+              <p className="muted" style={{ fontSize: 12, margin: "2px 0 0" }}>combined, last 7 days</p>
+            </div>
+            {highlights.latestPb && (
+              <div className="highlight-card">
+                <p className="eyebrow" style={{ margin: "0 0 4px" }}>💪 Latest PB</p>
+                <h2 style={{ margin: 0 }}>{highlights.latestPb.holder}</h2>
+                <p className="muted" style={{ fontSize: 12, margin: "2px 0 0" }}>
+                  {highlights.latestPb.exerciseName} —{" "}
+                  {highlights.latestPb.isBodyweight
+                    ? `${highlights.latestPb.best.reps} reps`
+                    : `${highlights.latestPb.best.weight} kg × ${highlights.latestPb.best.reps}`}{" "}
+                  ({formatDate(highlights.latestPb.best.date)})
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {enriched.length > 0 && (
         <>
@@ -407,9 +544,9 @@ export default function Group() {
 
       {groupRecords.length > 0 && (
         <div className="panel">
-          <h3>Group records</h3>
+          <h3>Group records — massimale</h3>
           <p className="muted" style={{ marginTop: -6, marginBottom: 12 }}>
-            Best set ever logged, per exercise, among everyone whose data you can see.
+            Best single set ever logged, per exercise, among everyone whose data you can see.
           </p>
           <div className="table-scroll">
             <table>
@@ -432,6 +569,38 @@ export default function Group() {
                     </td>
                     <td>{r.holder}</td>
                     <td className="muted">{formatDate(r.best.date)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {groupVolumeRecords.length > 0 && (
+        <div className="panel">
+          <h3>Group records — best session volume</h3>
+          <p className="muted" style={{ marginTop: -6, marginBottom: 12 }}>
+            Highest total volume for that exercise in a single session — different from "massimale" above: a
+            session of many lighter sets can out-volume one heavy single.
+          </p>
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Exercise</th>
+                  <th>Best volume</th>
+                  <th>Held by</th>
+                  <th>Date</th>
+                </tr>
+              </thead>
+              <tbody>
+                {groupVolumeRecords.map((r) => (
+                  <tr key={r.exerciseName}>
+                    <td>{r.exerciseName}</td>
+                    <td>{r.volume.toFixed(0)} kg</td>
+                    <td>{r.holder}</td>
+                    <td className="muted">{formatDate(r.date)}</td>
                   </tr>
                 ))}
               </tbody>

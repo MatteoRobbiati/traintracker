@@ -190,6 +190,13 @@ table td input, table td select { padding: 6px 8px; min-width: 0; }
 }
 
 .card-list { display: grid; gap: 12px; }
+
+/* Group highlights -- a dedicated card style rather than nesting .panel
+   inside .panel (the general-sibling `.panel + .panel { margin-top }` rule
+   is meant for stacked sections, not a side-by-side grid, and CSS Grid
+   wraps more predictably than a flex row here anyway). */
+.highlight-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.highlight-card { background: var(--paper); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
 .card-link {
   display: block;
   background: var(--paper-raised);
