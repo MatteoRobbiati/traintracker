@@ -95,4 +95,33 @@ npm run deploy   # builds and pushes dist/ to the gh-pages branch
 Then enable Pages for the repo (Settings → Pages → Deploy from a branch →
 `gh-pages`). Set the two `VITE_SUPABASE_*` values as repo secrets only if you
 move the build into CI — for `npm run deploy` run locally, `.env.local` is
-read directly at build time.
+read directly at build time. `npm run deploy` pushes straight to the
+`gh-pages` branch regardless of the branch protection below — that's the
+build output, not source, and isn't meant to go through review.
+
+## Protecting `main`
+
+[`.github/CODEOWNERS`](.github/CODEOWNERS) makes every file owned by
+`@MatteoRobbiati`, but a CODEOWNERS file by itself doesn't block anything —
+it only takes effect once a branch protection rule asks for it. One-time
+setup, on GitHub:
+
+1. Repo → **Settings → Rules → Rulesets** (or **Settings → Branches** on
+   older UIs) → **New branch ruleset** (or **Add branch protection rule**).
+2. Target branch: `main`.
+3. Enable **Require a pull request before merging**, then under it:
+   - **Required approvals**: 1
+   - **Require review from Code Owners**
+4. Save.
+
+After that, `git push` straight to `main` is rejected for everyone (including
+the owner, unless "bypass" is explicitly granted) — changes need a branch +
+pull request, approved before merging:
+
+```sh
+git checkout -b some-change
+# ...edit, commit...
+git push -u origin some-change
+# open the PR on GitHub (or `gh pr create` if you have the CLI), then
+# approve and merge it from there
+```

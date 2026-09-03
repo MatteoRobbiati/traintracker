@@ -1,0 +1,4 @@
+# Every file in the repo needs a review from an owner before it can be
+# merged. Paired with a branch protection rule on `main` that requires
+# "Require review from Code Owners" — see README.md for the one-time setup.
+* @MatteoRobbiati
