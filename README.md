@@ -82,6 +82,14 @@ Climbing, Bodyweight, Running) — a fixed list for now, not user-creatable.
 Adding a room is a pure frontend change (no DB migration): `room` on
 `messages` isn't CHECK-constrained.
 
+From the "Log a workout" form, the current fields can be saved as a named
+**template** (`workout_templates` + `template_sets`, mirroring
+`workouts`/`endurance_details`/`sets`) and later loaded back in as a
+starting point for a new workout. Templates are strictly private — not
+shared with connections the way everything else is; every RLS policy on
+those two tables checks `user_id = auth.uid()` directly, no
+`is_connected()`.
+
 ## Access model
 
 Names, "last seen", and the exercise library are visible to everyone with an

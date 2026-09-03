@@ -4,7 +4,7 @@ import { supabase } from "../lib/supabaseClient";
 import { useAuth } from "../context/AuthContext";
 import { setVolume } from "../lib/format";
 import { SPORTS, SPORT_LABELS, CLIMBING_DISCIPLINES, CLIMBING_DISCIPLINE_LABELS } from "../constants/sports";
-import type { WorkoutType } from "../types/database";
+import type { WorkoutTemplate, WorkoutType } from "../types/database";
 
 interface ExerciseOption {
   id: string;
@@ -80,6 +80,26 @@ export default function WorkoutForm() {
   const [submitting, setSubmitting] = useState(false);
   const [loading, setLoading] = useState(isEdit);
 
+  // Templates: reusable session plans, private per user (see NOTICE-less
+  // RLS on workout_templates/template_sets -- not even shared with
+  // connections). Loaded once so the picker and "save as" can both use them.
+  const [templates, setTemplates] = useState<WorkoutTemplate[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState("");
+  const [loadingTemplate, setLoadingTemplate] = useState(false);
+  const [showSaveTemplate, setShowSaveTemplate] = useState(false);
+  const [templateName, setTemplateName] = useState("");
+  const [savingTemplate, setSavingTemplate] = useState(false);
+  const [templateSaved, setTemplateSaved] = useState(false);
+
+  async function loadTemplateList(userId: string) {
+    const { data } = await supabase
+      .from("workout_templates")
+      .select("*")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false });
+    setTemplates(data ?? []);
+  }
+
   useEffect(() => {
     if (!user) return;
     supabase
@@ -95,6 +115,7 @@ export default function WorkoutForm() {
       .limit(1)
       .maybeSingle()
       .then(({ data }) => setBodyWeightKg(data?.weight_kg ?? null));
+    loadTemplateList(user.id);
   }, [user]);
 
   // Load the existing workout (+ sets, or endurance details) when editing.
@@ -153,6 +174,127 @@ export default function WorkoutForm() {
     }
     load();
   }, [id]);
+
+  // Loads a saved template into the current (unsaved) form -- everything
+  // except `date`, which stays at whatever the user already picked (usually
+  // today).
+  async function applyTemplate(templateId: string) {
+    setSelectedTemplateId(templateId);
+    if (!templateId) return;
+    const template = templates.find((t) => t.id === templateId);
+    if (!template) return;
+
+    setLoadingTemplate(true);
+    setWorkoutType(template.workout_type);
+    setWarmup(template.warmup ?? "");
+    setNotes(template.notes ?? "");
+    setDuration(template.duration_minutes != null ? String(template.duration_minutes) : "");
+
+    if (template.workout_type === "endurance") {
+      const sportValue = template.sport ?? "";
+      if ((SPORTS as readonly string[]).includes(sportValue)) {
+        setSport(sportValue);
+      } else {
+        setSport(OTHER_SPORT);
+        setCustomSport(sportValue);
+      }
+      setDiscipline(template.discipline ?? "");
+      setDistanceKm(template.distance_km != null ? String(template.distance_km) : "");
+      setSessionDetail(template.session_detail ?? "");
+      setBlocks([]);
+    } else {
+      const { data: s } = await supabase
+        .from("template_sets")
+        .select("*")
+        .eq("template_id", templateId)
+        .order("set_order");
+      const loadedBlocks: ExerciseBlock[] = [];
+      for (const row of s ?? []) {
+        const last = loadedBlocks[loadedBlocks.length - 1];
+        const set: SetRow = {
+          weight: String(row.weight),
+          reps: String(row.reps),
+          restSeconds: row.rest_time_seconds != null ? String(row.rest_time_seconds) : "",
+        };
+        if (last && last.exerciseId === row.exercise_id) {
+          last.sets.push(set);
+        } else {
+          loadedBlocks.push({ key: crypto.randomUUID(), exerciseId: row.exercise_id, sets: [set] });
+        }
+      }
+      setBlocks(loadedBlocks);
+    }
+    setLoadingTemplate(false);
+  }
+
+  async function deleteTemplate(templateId: string) {
+    if (!confirm("Delete this template?")) return;
+    const { error } = await supabase.from("workout_templates").delete().eq("id", templateId);
+    if (error) {
+      setError(error.message);
+      return;
+    }
+    setTemplates((prev) => prev.filter((t) => t.id !== templateId));
+    if (selectedTemplateId === templateId) setSelectedTemplateId("");
+  }
+
+  async function saveAsTemplate() {
+    if (!user || !templateName.trim()) return;
+    setSavingTemplate(true);
+    setError(null);
+
+    const resolvedSport = sport === OTHER_SPORT ? customSport.trim() : sport;
+    const { data: template, error: templateError } = await supabase
+      .from("workout_templates")
+      .insert({
+        user_id: user.id,
+        name: templateName.trim(),
+        workout_type: workoutType,
+        warmup: warmup.trim() || null,
+        notes: notes.trim() || null,
+        duration_minutes: duration ? Number(duration) : null,
+        sport: workoutType === "endurance" ? resolvedSport : null,
+        discipline: workoutType === "endurance" && sport === "climbing" && discipline ? discipline : null,
+        distance_km: workoutType === "endurance" && distanceKm ? Number(distanceKm) : null,
+        session_detail: workoutType === "endurance" ? sessionDetail.trim() || null : null,
+      })
+      .select()
+      .single();
+
+    if (templateError || !template) {
+      setSavingTemplate(false);
+      setError(templateError?.message ?? "Failed to save template.");
+      return;
+    }
+
+    if (workoutType === "strength") {
+      const rows = blocks.flatMap((block, blockIndex) =>
+        block.sets.map((s, setIndex) => ({
+          template_id: template.id,
+          exercise_id: block.exerciseId,
+          weight: Number(s.weight) || 0,
+          reps: Number(s.reps) || 0,
+          rest_time_seconds: s.restSeconds ? Number(s.restSeconds) : null,
+          set_order: blockIndex * 1000 + setIndex,
+        }))
+      );
+      if (rows.length > 0) {
+        const { error: setsError } = await supabase.from("template_sets").insert(rows);
+        if (setsError) {
+          setSavingTemplate(false);
+          setError(setsError.message);
+          return;
+        }
+      }
+    }
+
+    setSavingTemplate(false);
+    setShowSaveTemplate(false);
+    setTemplateName("");
+    setTemplateSaved(true);
+    setTimeout(() => setTemplateSaved(false), 3000);
+    await loadTemplateList(user.id);
+  }
 
   async function addBlock() {
     if (exerciseOptions.length === 0 || !user) return;
@@ -290,6 +432,32 @@ export default function WorkoutForm() {
     <div>
       <h1>{isEdit ? "Edit workout" : "Log a workout"}</h1>
       <form className="form-grid panel" onSubmit={handleSubmit}>
+        {!isEdit && templates.length > 0 && (
+          <div className="field">
+            <label htmlFor="template">Start from a template</label>
+            <div className="row">
+              <select
+                id="template"
+                value={selectedTemplateId}
+                onChange={(e) => applyTemplate(e.target.value)}
+                disabled={loadingTemplate}
+              >
+                <option value="">— none —</option>
+                {templates.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+              {selectedTemplateId && (
+                <button type="button" className="ghost" onClick={() => deleteTemplate(selectedTemplateId)}>
+                  Delete template
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         {isEdit ? (
           <span className="chip focus" style={{ width: "fit-content" }}>
             {workoutType === "endurance" ? "Endurance" : "Strength"}
@@ -520,6 +688,34 @@ export default function WorkoutForm() {
         <div className="field">
           <label htmlFor="notes">{workoutType === "endurance" ? "General comment" : "Notes"}</label>
           <textarea id="notes" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
+        </div>
+
+        <div className="field">
+          <label>Template</label>
+          {showSaveTemplate ? (
+            <div className="row">
+              <input
+                autoFocus
+                value={templateName}
+                onChange={(e) => setTemplateName(e.target.value)}
+                placeholder="Template name"
+                style={{ maxWidth: 240 }}
+              />
+              <button type="button" onClick={saveAsTemplate} disabled={savingTemplate || !templateName.trim()}>
+                {savingTemplate ? "Saving…" : "Save"}
+              </button>
+              <button type="button" className="ghost" onClick={() => setShowSaveTemplate(false)}>
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <div className="row">
+              <button type="button" className="ghost" onClick={() => setShowSaveTemplate(true)}>
+                Save as template
+              </button>
+              {templateSaved && <span className="muted">Saved.</span>}
+            </div>
+          )}
         </div>
 
         {error && <p className="error-text">{error}</p>}
