@@ -81,7 +81,10 @@ bug.
 Chat is split into topic rooms (`src/constants/rooms.ts`: General, Gym,
 Climbing, Bodyweight, Running) — a fixed list for now, not user-creatable.
 Adding a room is a pure frontend change (no DB migration): `room` on
-`messages` isn't CHECK-constrained.
+`messages` isn't CHECK-constrained. The room-tab pills (`.chat-room-tab`)
+didn't reset the global `button` border, so every tab carried a stray grey
+outline mismatched against the active tab's orange fill — fixed by resetting
+`border: none` there, same as the other icon-only/pill buttons already do.
 
 Dashboard shows a training **streak** (`src/lib/streak.ts`) — deliberately
 not the Duolingo kind: one rest day never breaks it, only a *second*
@@ -123,6 +126,17 @@ starting point for a new workout. Templates are strictly private — not
 shared with connections the way everything else is; every RLS policy on
 those two tables checks `user_id = auth.uid()` directly, no
 `is_connected()`.
+
+Dashboard shows an **Activity** panel (`src/components/ContributionGraph.tsx`) —
+a GitHub-contributions-style calendar of workout density, one square per day
+over the last year, scrolled to today by default. It's deliberately just a
+density map, independent from the streak text next to it: a rest day renders
+as an empty square without implying the streak broke, matching how
+`computeStreak` (`src/lib/streak.ts`) already tolerates one rest day.
+
+Friends/connections has its own top-level nav entry (`/connections`, both the
+top nav and the mobile bottom bar) rather than living inside Profile — the
+pending-request count badge moved there with it.
 
 ## Access model
 

@@ -71,6 +71,16 @@ export function GroupIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+export function FriendsIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Icon {...props}>
+      <circle cx="9.5" cy="9.5" r="3.6" />
+      <path d="M3.3 20c0-3.9 2.8-6.2 6.2-6.2s6.2 2.3 6.2 6.2" />
+      <path d="M16.7 5.3v5.4M14 8h5.4" />
+    </Icon>
+  );
+}
+
 export function ProfileIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <Icon {...props}>

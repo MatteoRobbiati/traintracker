@@ -1,8 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
 import { useAuth } from "../context/AuthContext";
-import { useConnections } from "../hooks/useConnections";
 import { formatDate } from "../lib/format";
 import type { BodyWeightLog } from "../types/database";
 
@@ -13,9 +11,6 @@ export default function Profile() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [loading, setLoading] = useState(true);
-
-  const { rows: connectionRows } = useConnections();
-  const incomingCount = connectionRows.filter((r) => r.status === "incoming_pending").length;
 
   async function loadLogs() {
     if (!user) return;
@@ -96,18 +91,6 @@ export default function Profile() {
         )}
         {!loading && logs.length === 0 && <p className="muted" style={{ marginTop: 12 }}>No entries yet.</p>}
       </div>
-
-      <Link to="/connections" className="card-link">
-        <div className="row between">
-          <div>
-            <strong>Friends &amp; connections</strong>
-            <p className="muted" style={{ margin: "2px 0 0", fontSize: 13 }}>
-              Manage who can see your workouts and body weight.
-            </p>
-          </div>
-          {incomingCount > 0 && <span className="chip focus">{incomingCount} pending</span>}
-        </div>
-      </Link>
     </div>
   );
 }
