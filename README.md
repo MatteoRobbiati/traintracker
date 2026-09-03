@@ -69,6 +69,19 @@ Bodyweight-exercise volume is computed as `(latest body weight + added weight) �
 loaded exercises are `weight × reps`. Added weight may be negative for
 assisted movements.
 
+Workouts are one of two types, chosen at creation and fixed after:
+**strength** (exercises → sets, as above) or **endurance** — climbing,
+running, swimming, cycling, tennis, or a custom sport, with duration,
+distance, and free-text session detail (`src/constants/sports.ts`; DB row in
+`endurance_details`). Endurance sessions don't produce `sets`, so they don't
+appear in Group's volume/exercise charts — that's the expected scope, not a
+bug.
+
+Chat is split into topic rooms (`src/constants/rooms.ts`: General, Gym,
+Climbing, Bodyweight, Running) — a fixed list for now, not user-creatable.
+Adding a room is a pure frontend change (no DB migration): `room` on
+`messages` isn't CHECK-constrained.
+
 ## Access model
 
 Names, "last seen", and the exercise library are visible to everyone with an

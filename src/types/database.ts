@@ -32,6 +32,8 @@ export type Exercise = {
   created_at: string;
 };
 
+export type WorkoutType = "strength" | "endurance";
+
 export type Workout = {
   id: string;
   user_id: string;
@@ -39,7 +41,18 @@ export type Workout = {
   notes: string | null;
   warmup: string | null;
   duration_minutes: number | null;
+  workout_type: WorkoutType;
   created_at: string;
+};
+
+export type EnduranceDiscipline = "boulder" | "rope" | "both";
+
+export type EnduranceDetails = {
+  workout_id: string;
+  sport: string;
+  discipline: string | null;
+  distance_km: number | null;
+  session_detail: string | null;
 };
 
 export type WorkoutSet = {
@@ -66,6 +79,7 @@ export type Connection = {
 export type Message = {
   id: string;
   sender_id: string;
+  room: string;
   body: string;
   created_at: string;
 };
@@ -96,6 +110,10 @@ export type Database = {
         Pick<Connection, "requester_id" | "addressee_id"> & Partial<Connection>
       >;
       messages: Table<Message, Pick<Message, "sender_id" | "body"> & Partial<Message>>;
+      endurance_details: Table<
+        EnduranceDetails,
+        Pick<EnduranceDetails, "workout_id" | "sport"> & Partial<EnduranceDetails>
+      >;
     };
     Views: Record<string, never>;
     Functions: {

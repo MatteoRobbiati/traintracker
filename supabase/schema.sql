@@ -73,7 +73,10 @@ create table public.exercises (
 );
 
 -- ============================================================================
--- workouts — one session per row.
+-- workouts — one session per row. workout_type distinguishes a normal
+-- strength session (logged via sets, below) from an endurance session
+-- (logged via endurance_details, below) — a workout is one or the other,
+-- never both.
 -- ============================================================================
 create table public.workouts (
   id                uuid primary key default gen_random_uuid(),
@@ -82,13 +85,14 @@ create table public.workouts (
   notes             text,
   warmup            text,               -- free-text warmup summary
   duration_minutes  integer check (duration_minutes >= 0),
+  workout_type      text not null default 'strength' check (workout_type in ('strength', 'endurance')),
   created_at        timestamptz not null default now()
 );
 
 create index workouts_user_date_idx on public.workouts (user_id, date desc);
 
 -- ============================================================================
--- sets — one row per working set within a workout.
+-- sets — one row per working set within a strength workout.
 -- weight can be negative for assisted bodyweight movements (e.g. assisted
 -- pull-up machine: -20 means 20kg of assistance).
 -- ============================================================================
@@ -104,6 +108,20 @@ create table public.sets (
 
 create index sets_workout_idx on public.sets (workout_id, set_order);
 create index sets_exercise_idx on public.sets (exercise_id);
+
+-- ============================================================================
+-- endurance_details — one row per endurance workout (climbing, running,
+-- swimming, cycling, tennis, ...). sport/discipline are free text rather
+-- than a CHECK-constrained list so new sports don't need a migration; the
+-- frontend offers a curated set of presets plus "other".
+-- ============================================================================
+create table public.endurance_details (
+  workout_id      uuid primary key references public.workouts(id) on delete cascade,
+  sport           text not null,
+  discipline      text,              -- e.g. climbing: 'boulder' | 'rope' | 'both'
+  distance_km     numeric(6,2) check (distance_km >= 0),
+  session_detail  text               -- free text: routes/boulders sent, splits, etc.
+);
 
 -- ============================================================================
 -- New-user bootstrap: create a profile row the moment someone signs up.
@@ -182,19 +200,22 @@ $$;
 grant execute on function public.is_connected(uuid) to authenticated;
 
 -- ============================================================================
--- messages — a single group chat room, visible to everyone with an account
--- (like the exercise library, not gated by connections). "Online now" is
--- handled separately, client-side, via Supabase Realtime Presence — it isn't
--- backed by a table.
+-- messages — topic rooms (general/gym/climbing/...), visible to everyone
+-- with an account (like the exercise library, not gated by connections).
+-- `room` isn't a CHECK-constrained list — the frontend's ROOMS constant is
+-- the source of truth, so adding a room is a pure frontend change. "Online
+-- now" is handled separately, client-side, via Supabase Realtime Presence
+-- (global, not per-room) — it isn't backed by a table.
 -- ============================================================================
 create table public.messages (
   id          uuid primary key default gen_random_uuid(),
   sender_id   uuid not null references public.profiles(id) on delete cascade,
+  room        text not null default 'general',
   body        text not null check (char_length(btrim(body)) > 0 and char_length(body) <= 2000),
   created_at  timestamptz not null default now()
 );
 
-create index messages_created_at_idx on public.messages (created_at);
+create index messages_room_created_at_idx on public.messages (room, created_at);
 
 -- Stream inserts to subscribed clients in realtime.
 alter publication supabase_realtime add table public.messages;
@@ -212,6 +233,7 @@ alter table public.workouts         enable row level security;
 alter table public.sets             enable row level security;
 alter table public.connections      enable row level security;
 alter table public.messages         enable row level security;
+alter table public.endurance_details enable row level security;
 
 -- profiles (names + last_seen stay visible to everyone so people can find
 -- who to send a connection request to)
@@ -268,6 +290,24 @@ create policy "sets_delete_own" on public.sets
     exists (select 1 from public.workouts w where w.id = workout_id and w.user_id = auth.uid())
   );
 
+-- endurance_details (ownership/visibility follows the parent workout, same as sets)
+create policy "endurance_select_own_or_connected" on public.endurance_details
+  for select to authenticated using (
+    exists (select 1 from public.workouts w where w.id = workout_id and public.is_connected(w.user_id))
+  );
+create policy "endurance_insert_own" on public.endurance_details
+  for insert to authenticated with check (
+    exists (select 1 from public.workouts w where w.id = workout_id and w.user_id = auth.uid())
+  );
+create policy "endurance_update_own" on public.endurance_details
+  for update to authenticated using (
+    exists (select 1 from public.workouts w where w.id = workout_id and w.user_id = auth.uid())
+  );
+create policy "endurance_delete_own" on public.endurance_details
+  for delete to authenticated using (
+    exists (select 1 from public.workouts w where w.id = workout_id and w.user_id = auth.uid())
+  );
+
 -- connections — each side sees only requests they're part of; the requester
 -- creates it, only the addressee can accept/reject, either side can remove
 -- it (which also allows re-requesting after a rejection).
@@ -280,7 +320,7 @@ create policy "connections_update_addressee" on public.connections
 create policy "connections_delete_participant" on public.connections
   for delete to authenticated using (requester_id = auth.uid() or addressee_id = auth.uid());
 
--- messages (single group room: everyone reads everything, writes/deletes own)
+-- messages (topic rooms: everyone reads everything, writes/deletes own)
 create policy "messages_select_all" on public.messages
   for select to authenticated using (true);
 create policy "messages_insert_own" on public.messages

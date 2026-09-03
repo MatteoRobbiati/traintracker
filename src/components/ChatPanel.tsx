@@ -3,9 +3,10 @@ import { supabase } from "../lib/supabaseClient";
 import { useAuth } from "../context/AuthContext";
 import { useConnections } from "../hooks/useConnections";
 import ConnectionActions from "./ConnectionActions";
+import { ROOMS, DEFAULT_ROOM, type RoomId } from "../constants/rooms";
 import type { Message, Profile } from "../types/database";
 
-const MAX_HISTORY = 200;
+const MAX_HISTORY = 500;
 
 interface ChatPanelProps {
   open: boolean;
@@ -29,6 +30,7 @@ export default function ChatPanel({ open, onClose }: ChatPanelProps) {
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [names, setNames] = useState<Record<string, string>>({});
+  const [room, setRoom] = useState<RoomId>(DEFAULT_ROOM);
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -66,9 +68,11 @@ export default function ChatPanel({ open, onClose }: ChatPanelProps) {
     };
   }, []);
 
+  const roomMessages = useMemo(() => messages.filter((m) => m.room === room), [messages, room]);
+
   useEffect(() => {
     if (open) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length, open]);
+  }, [roomMessages.length, open, room]);
 
   const onlineList = useMemo(
     () => Object.entries(onlineUsers).sort(([, a], [, b]) => a.localeCompare(b)),
@@ -83,7 +87,7 @@ export default function ChatPanel({ open, onClose }: ChatPanelProps) {
     if (!body || !user) return;
     setSending(true);
     setError(null);
-    const { error } = await supabase.from("messages").insert({ sender_id: user.id, body });
+    const { error } = await supabase.from("messages").insert({ sender_id: user.id, body, room });
     setSending(false);
     if (error) {
       setError(error.message);
@@ -101,6 +105,19 @@ export default function ChatPanel({ open, onClose }: ChatPanelProps) {
           <button type="button" className="ghost" onClick={onClose} aria-label="Close chat">
             ✕
           </button>
+        </div>
+
+        <div className="chat-panel-rooms">
+          {ROOMS.map((r) => (
+            <button
+              key={r.id}
+              type="button"
+              className={`chat-room-tab${room === r.id ? " active" : ""}`}
+              onClick={() => setRoom(r.id)}
+            >
+              {r.label}
+            </button>
+          ))}
         </div>
 
         <div className="chat-panel-online">
@@ -146,8 +163,8 @@ export default function ChatPanel({ open, onClose }: ChatPanelProps) {
 
         <div className="chat-panel-messages">
           {loading && <p className="muted">Loading…</p>}
-          {!loading && messages.length === 0 && <p className="muted">No messages yet — say hi.</p>}
-          {messages.map((m) => {
+          {!loading && roomMessages.length === 0 && <p className="muted">No messages yet — say hi.</p>}
+          {roomMessages.map((m) => {
             const mine = m.sender_id === user?.id;
             return (
               <div key={m.id} style={{ alignSelf: mine ? "flex-end" : "flex-start", maxWidth: "85%" }}>
@@ -183,7 +200,7 @@ export default function ChatPanel({ open, onClose }: ChatPanelProps) {
           <input
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
-            placeholder="Write a message…"
+            placeholder={`Message #${room}…`}
             maxLength={2000}
             style={{ flex: 1 }}
           />

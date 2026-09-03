@@ -344,6 +344,25 @@ button.linklike { background: none; border: none; cursor: pointer; }
   padding: 14px 14px 10px;
   border-bottom: 1px solid var(--line);
 }
+.chat-panel-rooms {
+  display: flex;
+  gap: 4px;
+  padding: 8px 10px 0;
+  overflow-x: auto;
+}
+.chat-room-tab {
+  background: none;
+  border: none;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-soft);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.chat-room-tab:hover { background: var(--paper); }
+.chat-room-tab.active { background: var(--ember); color: #fff; }
 .chat-panel-online {
   padding: 10px 14px;
   border-bottom: 1px solid var(--line);
