@@ -29,6 +29,13 @@ function emptySet(): SetRow {
   return { weight: "0", reps: "", restSeconds: "" };
 }
 
+function formatElapsed(startedAt: number): string {
+  const totalSec = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
 // Prefills a newly added block from the sets logged last time this user did
 // this exercise, so re-adding "Bench Press" starts from what was actually
 // lifted last time instead of blank fields.
@@ -80,6 +87,19 @@ export default function WorkoutForm() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [loading, setLoading] = useState(isEdit);
+
+  // Rest timer: a literal stopwatch per exercise block, for use *during* the
+  // workout -- start it after finishing a set, stop it right before the
+  // next one. Stopping fills the just-finished set's rest field and adds
+  // the next set row in one go, instead of typing a number in after the fact.
+  const [restStart, setRestStart] = useState<Record<string, number>>({});
+  const [, forceTick] = useState(0);
+
+  useEffect(() => {
+    if (Object.keys(restStart).length === 0) return;
+    const interval = setInterval(() => forceTick((t) => t + 1), 1000);
+    return () => clearInterval(interval);
+  }, [restStart]);
 
   // Templates: reusable session plans, private per user (see NOTICE-less
   // RLS on workout_templates/template_sets -- not even shared with
@@ -296,10 +316,42 @@ export default function WorkoutForm() {
 
   function removeBlock(key: string) {
     setBlocks((prev) => prev.filter((b) => b.key !== key));
+    cancelRest(key);
   }
 
   function addSet(key: string) {
     setBlocks((prev) => prev.map((b) => (b.key === key ? { ...b, sets: [...b.sets, emptySet()] } : b)));
+  }
+
+  function startRest(key: string) {
+    setRestStart((prev) => ({ ...prev, [key]: Date.now() }));
+  }
+
+  function cancelRest(key: string) {
+    setRestStart((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  }
+
+  /** Stops the timer, writes the elapsed seconds onto the set that was just
+   * finished (the last one), and adds a fresh set row for the next one. */
+  function stopRestAndAddSet(key: string) {
+    const startedAt = restStart[key];
+    if (startedAt) {
+      const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
+      setBlocks((prev) =>
+        prev.map((b) => {
+          if (b.key !== key || b.sets.length === 0) return b;
+          const sets = [...b.sets];
+          sets[sets.length - 1] = { ...sets[sets.length - 1], restSeconds: String(elapsedSec) };
+          return { ...b, sets };
+        })
+      );
+    }
+    cancelRest(key);
+    addSet(key);
   }
 
   function updateSet(key: string, index: number, patch: Partial<SetRow>) {
@@ -476,6 +528,7 @@ export default function WorkoutForm() {
             <input
               id="duration"
               type="number"
+              inputMode="numeric"
               min={0}
               value={duration}
               onChange={(e) => setDuration(e.target.value)}
@@ -538,6 +591,7 @@ export default function WorkoutForm() {
                                 <td>
                                   <input
                                     type="number"
+                                    inputMode="decimal"
                                     value={s.weight}
                                     onChange={(e) => updateSet(block.key, i, { weight: e.target.value })}
                                   />
@@ -545,6 +599,7 @@ export default function WorkoutForm() {
                                 <td>
                                   <input
                                     type="number"
+                                    inputMode="numeric"
                                     min={0}
                                     value={s.reps}
                                     onChange={(e) => updateSet(block.key, i, { reps: e.target.value })}
@@ -553,6 +608,7 @@ export default function WorkoutForm() {
                                 <td>
                                   <input
                                     type="number"
+                                    inputMode="numeric"
                                     min={0}
                                     value={s.restSeconds}
                                     onChange={(e) => updateSet(block.key, i, { restSeconds: e.target.value })}
@@ -572,14 +628,26 @@ export default function WorkoutForm() {
                         </tbody>
                       </table>
                       </div>
-                      <button
-                        type="button"
-                        className="ghost"
-                        onClick={() => addSet(block.key)}
-                        style={{ marginTop: 6 }}
-                      >
-                        + Add set
-                      </button>
+                      <div className="row" style={{ marginTop: 6, gap: 8 }}>
+                        <button type="button" className="ghost" onClick={() => addSet(block.key)}>
+                          + Add set
+                        </button>
+                        {restStart[block.key] ? (
+                          <>
+                            <span className="chip focus">⏱ {formatElapsed(restStart[block.key])}</span>
+                            <button type="button" className="primary" onClick={() => stopRestAndAddSet(block.key)}>
+                              Stop &amp; next set
+                            </button>
+                            <button type="button" className="ghost" onClick={() => cancelRest(block.key)}>
+                              Cancel
+                            </button>
+                          </>
+                        ) : (
+                          <button type="button" className="ghost" onClick={() => startRest(block.key)}>
+                            ⏱ Start rest timer
+                          </button>
+                        )}
+                      </div>
                       {exercise?.is_bodyweight && bodyWeightKg == null && (
                         <p className="muted" style={{ fontSize: 12, marginTop: 6 }}>
                           Log your body weight in Profile to compute volume for bodyweight sets.
@@ -644,6 +712,7 @@ export default function WorkoutForm() {
                 <input
                   id="distance"
                   type="number"
+                  inputMode="decimal"
                   min={0}
                   step="0.1"
                   value={distanceKm}

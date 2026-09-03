@@ -105,6 +105,17 @@ as tiebreaker either way) — shown per exercise on its detail page (your own
 data) and as a **Group records** table on the Group page (best among
 everyone whose data you can see, i.e. self + accepted connections).
 
+Each exercise block in WorkoutForm has a rest **timer**: "Start rest timer"
+after finishing a set, "Stop & next set" right before the next one — that
+fills the just-finished set's rest field with the elapsed time and adds the
+next set row in one action, instead of typing a number in after the fact.
+
+Mobile inputs are 16px (not smaller) on purpose, `table td input`/`select`
+included — anything under 16px makes iOS Safari zoom the whole page in on
+focus, which is exactly the "why did my phone just jump" annoyance mid-set.
+Numeric fields also set `inputMode` (`"decimal"` for weight/distance,
+`"numeric"` for reps/rest/duration) so the phone offers the right keyboard.
+
 From the "Log a workout" form, the current fields can be saved as a named
 **template** (`workout_templates` + `template_sets`, mirroring
 `workouts`/`endurance_details`/`sets`) and later loaded back in as a

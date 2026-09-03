@@ -62,6 +62,7 @@ export default function Profile() {
             <input
               id="weight"
               type="number"
+              inputMode="decimal"
               step="0.1"
               min={0}
               required
