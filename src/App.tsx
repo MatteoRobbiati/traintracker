@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { BrowserRouter, Routes, Route, Outlet } from "react-router-dom";
 import { AuthProvider } from "./context/AuthContext";
+import { ThemeProvider } from "./context/ThemeContext";
 import ProtectedRoute from "./components/ProtectedRoute";
 import Nav from "./components/Nav";
 import ChatPanel from "./components/ChatPanel";
@@ -37,27 +38,29 @@ function AppLayout() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <BrowserRouter basename={import.meta.env.BASE_URL}>
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/signup" element={<Signup />} />
-          <Route element={<AppLayout />}>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/exercises" element={<Exercises />} />
-            <Route path="/exercises/new" element={<ExerciseForm />} />
-            <Route path="/exercises/:id" element={<ExerciseDetail />} />
-            <Route path="/exercises/:id/edit" element={<ExerciseForm />} />
-            <Route path="/workouts" element={<Workouts />} />
-            <Route path="/workouts/new" element={<WorkoutForm />} />
-            <Route path="/workouts/:id" element={<WorkoutDetail />} />
-            <Route path="/workouts/:id/edit" element={<WorkoutForm />} />
-            <Route path="/group" element={<Group />} />
-            <Route path="/profile" element={<Profile />} />
-            <Route path="/connections" element={<Connections />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
-    </AuthProvider>
+    <ThemeProvider>
+      <AuthProvider>
+        <BrowserRouter basename={import.meta.env.BASE_URL}>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="/signup" element={<Signup />} />
+            <Route element={<AppLayout />}>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/exercises" element={<Exercises />} />
+              <Route path="/exercises/new" element={<ExerciseForm />} />
+              <Route path="/exercises/:id" element={<ExerciseDetail />} />
+              <Route path="/exercises/:id/edit" element={<ExerciseForm />} />
+              <Route path="/workouts" element={<Workouts />} />
+              <Route path="/workouts/new" element={<WorkoutForm />} />
+              <Route path="/workouts/:id" element={<WorkoutDetail />} />
+              <Route path="/workouts/:id/edit" element={<WorkoutForm />} />
+              <Route path="/group" element={<Group />} />
+              <Route path="/profile" element={<Profile />} />
+              <Route path="/connections" element={<Connections />} />
+            </Route>
+          </Routes>
+        </BrowserRouter>
+      </AuthProvider>
+    </ThemeProvider>
   );
 }

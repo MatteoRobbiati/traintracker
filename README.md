@@ -81,10 +81,12 @@ bug.
 Chat is split into topic rooms (`src/constants/rooms.ts`: General, Gym,
 Climbing, Bodyweight, Running) — a fixed list for now, not user-creatable.
 Adding a room is a pure frontend change (no DB migration): `room` on
-`messages` isn't CHECK-constrained. The room-tab pills (`.chat-room-tab`)
-didn't reset the global `button` border, so every tab carried a stray grey
-outline mismatched against the active tab's orange fill — fixed by resetting
-`border: none` there, same as the other icon-only/pill buttons already do.
+`messages` isn't CHECK-constrained. The room-tab row (`.chat-panel-rooms`)
+wraps onto a second line (`flex-wrap`) instead of scrolling horizontally —
+with only a handful of rooms, showing all of them at once beats hiding some
+behind a scroll a thumb has to discover first. Each tab is a real bordered
+chip (`.chat-room-tab`) even when inactive, not plain text, so it reads as
+an obviously selectable option.
 
 Dashboard shows a training **streak** (`src/lib/streak.ts`) — deliberately
 not the Duolingo kind: one rest day never breaks it, only a *second*
@@ -119,6 +121,24 @@ focus, which is exactly the "why did my phone just jump" annoyance mid-set.
 Numeric fields also set `inputMode` (`"decimal"` for weight/distance,
 `"numeric"` for reps/rest/duration) so the phone offers the right keyboard.
 
+Adding an exercise to a workout uses `SearchableSelect`
+(`src/components/SearchableSelect.tsx`) instead of a native `<select>` —
+type to filter instead of scrolling the whole exercise library blind. It's
+a generic text-input-plus-filtered-dropdown component, reusable anywhere
+else an option list might outgrow a native select.
+
+Appearance (Profile → **Appearance**) is per-device, not per-account: a
+light/dark/system theme mode and an accent color, both in `localStorage`
+(`src/lib/theme.ts`, `src/context/ThemeContext.tsx`). "System" tracks the
+OS setting live. The base paper/ink palette stays CSS-driven via
+`data-theme` on `<html>` (already there for dark mode — this just added the
+UI to force it); the accent's `--ember`/`--ember-muted`/`--focus` are written
+directly as inline CSS variables rather than a `data-accent` × `data-theme`
+CSS matrix, so a new accent is one object entry, not several new rule
+blocks. `index.html` carries a plain-JS duplicate of the palette table in a
+pre-React init script so the right colors are already applied before first
+paint — keep the two in sync if a palette value changes.
+
 From the "Log a workout" form, the current fields can be saved as a named
 **template** (`workout_templates` + `template_sets`, mirroring
 `workouts`/`endurance_details`/`sets`) and later loaded back in as a
@@ -132,7 +152,10 @@ a GitHub-contributions-style calendar of workout density, one square per day
 over the last year, scrolled to today by default. It's deliberately just a
 density map, independent from the streak text next to it: a rest day renders
 as an empty square without implying the streak broke, matching how
-`computeStreak` (`src/lib/streak.ts`) already tolerates one rest day.
+`computeStreak` (`src/lib/streak.ts`) already tolerates one rest day. Each
+level is `color-mix()`ed against `--stone` (the empty cell's own base color)
+rather than the pastel `--ember-muted` tint, so even the lightest "trained"
+level reads as a clear, saturated step up instead of a wash.
 
 Friends/connections has its own top-level nav entry (`/connections`, both the
 top nav and the mobile bottom bar) rather than living inside Profile — the
