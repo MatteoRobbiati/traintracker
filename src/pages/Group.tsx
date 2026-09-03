@@ -6,18 +6,17 @@ import {
   Line,
   BarChart,
   Bar,
-  PieChart,
-  Pie,
-  Cell,
   XAxis,
   YAxis,
   Tooltip,
   Legend,
   CartesianGrid,
+  Cell,
 } from "recharts";
 import { supabase } from "../lib/supabaseClient";
 import { setVolume } from "../lib/format";
-import { MUSCLE_LABELS, type Muscle } from "../constants/muscles";
+import MuscleMap from "../components/MuscleMap";
+import type { Muscle } from "../constants/muscles";
 
 // Categorical palette — distinguishable in both light and dark, consistent
 // with the app's ember/focus accent pair.
@@ -30,6 +29,12 @@ interface SetRow {
   exercise: { id: string; name: string; is_bodyweight: boolean; primary_muscles: Muscle[] } | null;
 }
 
+interface WeightLog {
+  user_id: string;
+  weight_kg: number;
+  recorded_at: string;
+}
+
 function isoWeekLabel(dateStr: string): string {
   const d = new Date(dateStr + "T00:00:00");
   const day = (d.getUTCDay() + 6) % 7; // Monday = 0
@@ -38,9 +43,14 @@ function isoWeekLabel(dateStr: string): string {
 }
 
 export default function Group() {
-  const [profiles, setProfiles] = useState<Record<string, string>>({});
-  const [bodyWeights, setBodyWeights] = useState<Record<string, number>>({});
+  // profileNames is just a lookup dict (id -> name) — profiles are visible
+  // to everyone, but we must never build a UI list (legend, dropdown) from
+  // its full keyset, only from ids that already appear in RLS-gated rows
+  // below (sets/weight logs). Otherwise names of non-connected people leak
+  // into chart legends even though their actual data stays hidden.
+  const [profileNames, setProfileNames] = useState<Record<string, string>>({});
   const [rows, setRows] = useState<SetRow[]>([]);
+  const [weightLogs, setWeightLogs] = useState<WeightLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedExercise, setSelectedExercise] = useState<string>("");
   const [muscleUserFilter, setMuscleUserFilter] = useState<string>("");
@@ -52,24 +62,32 @@ export default function Group() {
         supabase
           .from("sets")
           .select("weight, reps, workout:workouts(user_id, date), exercise:exercises(id, name, is_bodyweight, primary_muscles)"),
-        supabase.from("body_weight_logs").select("user_id, weight_kg, recorded_at").order("recorded_at", { ascending: false }),
+        supabase
+          .from("body_weight_logs")
+          .select("user_id, weight_kg, recorded_at")
+          .order("recorded_at", { ascending: false }),
       ]);
 
       const profMap: Record<string, string> = {};
       (profs ?? []).forEach((p) => (profMap[p.id] = p.name));
-      setProfiles(profMap);
-
-      const bwMap: Record<string, number> = {};
-      (weights ?? []).forEach((w) => {
-        if (!(w.user_id in bwMap)) bwMap[w.user_id] = w.weight_kg;
-      });
-      setBodyWeights(bwMap);
+      setProfileNames(profMap);
 
       setRows((sets as unknown as SetRow[]) ?? []);
+      setWeightLogs(weights ?? []);
       setLoading(false);
     }
     load();
   }, []);
+
+  // Latest weight per user, for bodyweight-exercise volume — weightLogs is
+  // already ordered newest-first.
+  const latestBodyWeight = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const w of weightLogs) {
+      if (!(w.user_id in map)) map[w.user_id] = w.weight_kg;
+    }
+    return map;
+  }, [weightLogs]);
 
   const enriched = useMemo(
     () =>
@@ -77,7 +95,7 @@ export default function Group() {
         .filter((r) => r.workout && r.exercise)
         .map((r) => ({
           userId: r.workout!.user_id,
-          userName: profiles[r.workout!.user_id] ?? "Unknown",
+          userName: profileNames[r.workout!.user_id] ?? "Unknown",
           date: r.workout!.date,
           week: isoWeekLabel(r.workout!.date),
           exerciseId: r.exercise!.id,
@@ -87,13 +105,20 @@ export default function Group() {
             isBodyweight: r.exercise!.is_bodyweight,
             weight: r.weight,
             reps: r.reps,
-            bodyWeightKg: bodyWeights[r.workout!.user_id] ?? null,
+            bodyWeightKg: latestBodyWeight[r.workout!.user_id] ?? null,
           }),
         })),
-    [rows, profiles, bodyWeights]
+    [rows, profileNames, latestBodyWeight]
   );
 
-  const userNames = useMemo(() => Array.from(new Set(Object.values(profiles))).sort(), [profiles]);
+  // Every id we're actually allowed to see (RLS already enforced this on
+  // the queries above) — the only safe source for "who shows up in charts".
+  const userNames = useMemo(() => {
+    const ids = new Set<string>([...enriched.map((r) => r.userId), ...weightLogs.map((w) => w.user_id)]);
+    return Array.from(ids)
+      .map((id) => profileNames[id] ?? "Unknown")
+      .sort();
+  }, [enriched, weightLogs, profileNames]);
 
   // Weekly volume per person
   const weeklyVolume = useMemo(() => {
@@ -119,9 +144,25 @@ export default function Group() {
     return Array.from(seen.entries()).map(([name, dates]) => ({ name, workouts: dates.size }));
   }, [enriched]);
 
-  // Muscle distribution (volume split evenly across an exercise's primary muscles)
-  const muscleDistribution = useMemo(() => {
-    const totals = new Map<string, number>();
+  // Body weight over time, one line per visible person
+  const weightSeries = useMemo(() => {
+    const byDate = new Map<string, Record<string, number>>();
+    for (const w of weightLogs) {
+      const name = profileNames[w.user_id] ?? "Unknown";
+      const date = w.recorded_at.slice(0, 10);
+      const entry = byDate.get(date) ?? {};
+      entry[name] = w.weight_kg;
+      byDate.set(date, entry);
+    }
+    return Array.from(byDate.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, values]) => ({ date, ...values }));
+  }, [weightLogs, profileNames]);
+
+  // Muscle heat: volume split evenly across an exercise's primary muscles,
+  // normalized 0..1 against the most-trained muscle for the figure.
+  const muscleIntensities = useMemo(() => {
+    const totals = new Map<Muscle, number>();
     for (const r of enriched) {
       if (muscleUserFilter && r.userName !== muscleUserFilter) continue;
       if (r.primaryMuscles.length === 0) continue;
@@ -130,10 +171,15 @@ export default function Group() {
         totals.set(m, (totals.get(m) ?? 0) + share);
       }
     }
-    return Array.from(totals.entries())
-      .map(([muscle, value]) => ({ name: MUSCLE_LABELS[muscle as Muscle] ?? muscle, value: Math.round(value) }))
-      .sort((a, b) => b.value - a.value);
+    const max = Math.max(0, ...totals.values());
+    const result: Partial<Record<Muscle, number>> = {};
+    if (max > 0) {
+      for (const [m, v] of totals) result[m] = v / max;
+    }
+    return result;
   }, [enriched, muscleUserFilter]);
+
+  const muscleHeatEmpty = Object.keys(muscleIntensities).length === 0;
 
   const exerciseOptions = useMemo(
     () => Array.from(new Set(enriched.map((r) => r.exerciseName))).sort(),
@@ -159,11 +205,11 @@ export default function Group() {
   }, [exerciseOptions, selectedExercise]);
 
   if (loading) return <p className="muted">Loading…</p>;
-  if (enriched.length === 0)
+  if (enriched.length === 0 && weightLogs.length === 0)
     return (
       <p className="muted">
-        Nothing to compare yet — either no workouts logged, or you're not connected with anyone. Head to{" "}
-        <Link to="/profile">Profile</Link> to request access to a friend's data.
+        Nothing to compare yet — either no workouts/weight logged, or you're not connected with anyone. Head
+        to <Link to="/profile">Profile</Link> to request access to a friend's data.
       </p>
     );
 
@@ -171,104 +217,151 @@ export default function Group() {
     <div className="stack" style={{ gap: 16 }}>
       <h1>Group</h1>
 
-      <div className="panel">
-        <h3>Weekly volume per person</h3>
-        <ResponsiveContainer width="100%" height={280}>
-          <LineChart data={weeklyVolume}>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" />
-            <XAxis dataKey="week" tick={{ fontSize: 11 }} stroke="var(--ink-soft)" />
-            <YAxis tick={{ fontSize: 11 }} stroke="var(--ink-soft)" />
-            <Tooltip contentStyle={{ background: "var(--paper-raised)", border: "1px solid var(--line)" }} />
-            <Legend />
-            {userNames.map((name, i) => (
-              <Line
-                key={name}
-                type="monotone"
-                dataKey={name}
-                stroke={PALETTE[i % PALETTE.length]}
-                strokeWidth={2}
-                dot={false}
-                connectNulls
-              />
-            ))}
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
+      {enriched.length > 0 && (
+        <>
+          <div className="panel">
+            <h3>Weekly volume per person</h3>
+            <ResponsiveContainer width="100%" height={280}>
+              <LineChart data={weeklyVolume}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" />
+                <XAxis dataKey="week" tick={{ fontSize: 11 }} stroke="var(--ink-soft)" />
+                <YAxis tick={{ fontSize: 11 }} stroke="var(--ink-soft)" />
+                <Tooltip contentStyle={{ background: "var(--paper-raised)", border: "1px solid var(--line)" }} />
+                <Legend />
+                {userNames.map((name, i) => (
+                  <Line
+                    key={name}
+                    type="monotone"
+                    dataKey={name}
+                    stroke={PALETTE[i % PALETTE.length]}
+                    strokeWidth={2}
+                    dot={false}
+                    connectNulls
+                  />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
 
-      <div className="panel">
-        <h3>Workout frequency</h3>
-        <ResponsiveContainer width="100%" height={240}>
-          <BarChart data={workoutFrequency}>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" />
-            <XAxis dataKey="name" tick={{ fontSize: 12 }} stroke="var(--ink-soft)" />
-            <YAxis tick={{ fontSize: 11 }} stroke="var(--ink-soft)" allowDecimals={false} />
-            <Tooltip contentStyle={{ background: "var(--paper-raised)", border: "1px solid var(--line)" }} />
-            <Bar dataKey="workouts" radius={[6, 6, 0, 0]}>
-              {workoutFrequency.map((_, i) => (
-                <Cell key={i} fill={PALETTE[i % PALETTE.length]} />
+          <div className="panel">
+            <h3>Workout frequency</h3>
+            <ResponsiveContainer width="100%" height={240}>
+              <BarChart data={workoutFrequency}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" />
+                <XAxis dataKey="name" tick={{ fontSize: 12 }} stroke="var(--ink-soft)" />
+                <YAxis tick={{ fontSize: 11 }} stroke="var(--ink-soft)" allowDecimals={false} />
+                <Tooltip contentStyle={{ background: "var(--paper-raised)", border: "1px solid var(--line)" }} />
+                <Bar dataKey="workouts" radius={[6, 6, 0, 0]}>
+                  {workoutFrequency.map((_, i) => (
+                    <Cell key={i} fill={PALETTE[i % PALETTE.length]} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </>
+      )}
+
+      {weightLogs.length > 0 && (
+        <div className="panel">
+          <h3>Body weight over time</h3>
+          <ResponsiveContainer width="100%" height={260}>
+            <LineChart data={weightSeries}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" />
+              <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="var(--ink-soft)" />
+              <YAxis tick={{ fontSize: 11 }} stroke="var(--ink-soft)" domain={["auto", "auto"]} unit="kg" />
+              <Tooltip contentStyle={{ background: "var(--paper-raised)", border: "1px solid var(--line)" }} />
+              <Legend />
+              {userNames.map((name, i) => (
+                <Line
+                  key={name}
+                  type="monotone"
+                  dataKey={name}
+                  stroke={PALETTE[i % PALETTE.length]}
+                  strokeWidth={2}
+                  dot={{ r: 3 }}
+                  connectNulls
+                />
               ))}
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
-
-      <div className="panel">
-        <div className="row between">
-          <h3>Muscle distribution</h3>
-          <select value={muscleUserFilter} onChange={(e) => setMuscleUserFilter(e.target.value)} style={{ width: "auto" }}>
-            <option value="">Everyone</option>
-            {userNames.map((n) => (
-              <option key={n} value={n}>
-                {n}
-              </option>
-            ))}
-          </select>
+            </LineChart>
+          </ResponsiveContainer>
         </div>
-        <ResponsiveContainer width="100%" height={300}>
-          <PieChart>
-            <Pie data={muscleDistribution} dataKey="value" nameKey="name" outerRadius={110} label={{ fontSize: 11 }}>
-              {muscleDistribution.map((_, i) => (
-                <Cell key={i} fill={PALETTE[i % PALETTE.length]} />
+      )}
+
+      {enriched.length > 0 && (
+        <div className="panel">
+          <div className="row between">
+            <h3>Muscle heat</h3>
+            <select value={muscleUserFilter} onChange={(e) => setMuscleUserFilter(e.target.value)} style={{ width: "auto" }}>
+              <option value="">Everyone</option>
+              {userNames.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
               ))}
-            </Pie>
-            <Tooltip contentStyle={{ background: "var(--paper-raised)", border: "1px solid var(--line)" }} />
-            <Legend />
-          </PieChart>
-        </ResponsiveContainer>
-      </div>
-
-      <div className="panel">
-        <div className="row between">
-          <h3>Compare an exercise</h3>
-          <select value={selectedExercise} onChange={(e) => setSelectedExercise(e.target.value)} style={{ width: "auto" }}>
-            {exerciseOptions.map((n) => (
-              <option key={n} value={n}>
-                {n}
-              </option>
-            ))}
-          </select>
+            </select>
+          </div>
+          {muscleHeatEmpty ? (
+            <p className="muted">No trained-muscle data for this selection yet.</p>
+          ) : (
+            <>
+              <MuscleMap intensities={muscleIntensities} />
+              <div className="row" style={{ gap: 8, marginTop: 10, alignItems: "center" }}>
+                <span className="muted" style={{ fontSize: 12 }}>
+                  Untrained
+                </span>
+                <div
+                  style={{
+                    height: 8,
+                    flex: 1,
+                    maxWidth: 160,
+                    borderRadius: 999,
+                    background: "linear-gradient(to right, var(--stone), var(--ember))",
+                  }}
+                />
+                <span className="muted" style={{ fontSize: 12 }}>
+                  Most trained
+                </span>
+              </div>
+            </>
+          )}
         </div>
-        <ResponsiveContainer width="100%" height={280}>
-          <LineChart data={exerciseComparison}>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" />
-            <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="var(--ink-soft)" />
-            <YAxis tick={{ fontSize: 11 }} stroke="var(--ink-soft)" />
-            <Tooltip contentStyle={{ background: "var(--paper-raised)", border: "1px solid var(--line)" }} />
-            <Legend />
-            {userNames.map((name, i) => (
-              <Line
-                key={name}
-                type="monotone"
-                dataKey={name}
-                stroke={PALETTE[i % PALETTE.length]}
-                strokeWidth={2}
-                dot={{ r: 3 }}
-                connectNulls
-              />
-            ))}
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
+      )}
+
+      {enriched.length > 0 && (
+        <div className="panel">
+          <div className="row between">
+            <h3>Compare an exercise</h3>
+            <select value={selectedExercise} onChange={(e) => setSelectedExercise(e.target.value)} style={{ width: "auto" }}>
+              {exerciseOptions.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          </div>
+          <ResponsiveContainer width="100%" height={280}>
+            <LineChart data={exerciseComparison}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" />
+              <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="var(--ink-soft)" />
+              <YAxis tick={{ fontSize: 11 }} stroke="var(--ink-soft)" />
+              <Tooltip contentStyle={{ background: "var(--paper-raised)", border: "1px solid var(--line)" }} />
+              <Legend />
+              {userNames.map((name, i) => (
+                <Line
+                  key={name}
+                  type="monotone"
+                  dataKey={name}
+                  stroke={PALETTE[i % PALETTE.length]}
+                  strokeWidth={2}
+                  dot={{ r: 3 }}
+                  connectNulls
+                />
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
     </div>
   );
 }
