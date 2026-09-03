@@ -14,7 +14,8 @@ import {
   Cell,
 } from "recharts";
 import { supabase } from "../lib/supabaseClient";
-import { setVolume } from "../lib/format";
+import { formatDate, setVolume } from "../lib/format";
+import { isBetterSet, type BestSetCandidate } from "../lib/personalBest";
 import MuscleMap from "../components/MuscleMap";
 import type { Muscle } from "../constants/muscles";
 
@@ -210,6 +211,28 @@ export default function Group() {
     if (!selectedExercise && exerciseOptions.length > 0) setSelectedExercise(exerciseOptions[0]);
   }, [exerciseOptions, selectedExercise]);
 
+  // Group records: best set ever logged per exercise, and who holds it --
+  // across everyone whose data is visible (self + accepted connections,
+  // same as everything else on this page; RLS already scoped `rows`).
+  const groupRecords = useMemo(() => {
+    const best = new Map<string, { best: BestSetCandidate; holder: string; isBodyweight: boolean }>();
+    for (const r of rows) {
+      if (!r.workout || !r.exercise) continue;
+      const candidate: BestSetCandidate = { weight: r.weight, reps: r.reps, date: r.workout.date };
+      const current = best.get(r.exercise.name);
+      if (!current || isBetterSet(candidate, current.best, r.exercise.is_bodyweight)) {
+        best.set(r.exercise.name, {
+          best: candidate,
+          holder: profileNames[r.workout.user_id] ?? "Unknown",
+          isBodyweight: r.exercise.is_bodyweight,
+        });
+      }
+    }
+    return Array.from(best.entries())
+      .map(([exerciseName, v]) => ({ exerciseName, ...v }))
+      .sort((a, b) => a.exerciseName.localeCompare(b.exerciseName));
+  }, [rows, profileNames]);
+
   if (loading) return <p className="muted">Loading…</p>;
   if (enriched.length === 0 && weightLogs.length === 0)
     return (
@@ -379,6 +402,41 @@ export default function Group() {
               ))}
             </LineChart>
           </ResponsiveContainer>
+        </div>
+      )}
+
+      {groupRecords.length > 0 && (
+        <div className="panel">
+          <h3>Group records</h3>
+          <p className="muted" style={{ marginTop: -6, marginBottom: 12 }}>
+            Best set ever logged, per exercise, among everyone whose data you can see.
+          </p>
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Exercise</th>
+                  <th>Best</th>
+                  <th>Held by</th>
+                  <th>Date</th>
+                </tr>
+              </thead>
+              <tbody>
+                {groupRecords.map((r) => (
+                  <tr key={r.exerciseName}>
+                    <td>{r.exerciseName}</td>
+                    <td>
+                      {r.isBodyweight
+                        ? `${r.best.reps} reps${r.best.weight ? ` (${r.best.weight > 0 ? "+" : ""}${r.best.weight} kg)` : ""}`
+                        : `${r.best.weight} kg × ${r.best.reps}`}
+                    </td>
+                    <td>{r.holder}</td>
+                    <td className="muted">{formatDate(r.best.date)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>

@@ -82,6 +82,19 @@ Climbing, Bodyweight, Running) — a fixed list for now, not user-creatable.
 Adding a room is a pure frontend change (no DB migration): `room` on
 `messages` isn't CHECK-constrained.
 
+Both WorkoutForm (while building a new/edited workout) and WorkoutDetail
+(for one already logged) can save the current fields as a named, private
+**template** (`src/lib/templates.ts`) to reuse later. WorkoutDetail also
+lets the owner edit a logged strength workout's weight/reps/rest values
+inline, without leaving the page — the full `/edit` form is still there for
+structural changes (adding/removing whole exercises).
+
+"Personal best" (`src/lib/personalBest.ts`) is the heaviest weight logged
+for a loaded exercise, or the most reps for a bodyweight one (added weight
+as tiebreaker either way) — shown per exercise on its detail page (your own
+data) and as a **Group records** table on the Group page (best among
+everyone whose data you can see, i.e. self + accepted connections).
+
 From the "Log a workout" form, the current fields can be saved as a named
 **template** (`workout_templates` + `template_sets`, mirroring
 `workouts`/`endurance_details`/`sets`) and later loaded back in as a
