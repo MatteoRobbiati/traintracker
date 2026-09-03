@@ -6,6 +6,10 @@ volume/frequency across the group. React + Vite + TypeScript, Supabase for
 auth/data/RLS, Recharts for the group view, deployed as a static site to
 GitHub Pages.
 
+## Jump in
+
+Use this link to start logging: [https://matteorobbiati.github.io/traintracker/login](https://matteorobbiati.github.io/traintracker/login)
+
 ## Setup
 
 1. Create a Supabase project, then run [`supabase/schema.sql`](supabase/schema.sql)
