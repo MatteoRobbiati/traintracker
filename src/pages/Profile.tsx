@@ -1,18 +1,10 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { Link } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
 import { useAuth } from "../context/AuthContext";
 import { useConnections } from "../hooks/useConnections";
-import ConnectionActions from "../components/ConnectionActions";
-import { formatDate, relativeTime } from "../lib/format";
+import { formatDate } from "../lib/format";
 import type { BodyWeightLog } from "../types/database";
-
-const STATUS_PRIORITY = {
-  incoming_pending: 0,
-  accepted: 1,
-  outgoing_pending: 2,
-  rejected: 3,
-  none: 4,
-} as const;
 
 export default function Profile() {
   const { user, profile } = useAuth();
@@ -22,16 +14,8 @@ export default function Profile() {
   const [submitting, setSubmitting] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  const {
-    rows,
-    loading: connectionsLoading,
-    error: connectionError,
-    busyId,
-    requestAccess,
-    respond,
-    removeConnection,
-    requestAgain,
-  } = useConnections();
+  const { rows: connectionRows } = useConnections();
+  const incomingCount = connectionRows.filter((r) => r.status === "incoming_pending").length;
 
   async function loadLogs() {
     if (!user) return;
@@ -65,8 +49,6 @@ export default function Profile() {
     setWeight("");
     loadLogs();
   }
-
-  const sortedRows = [...rows].sort((a, b) => STATUS_PRIORITY[a.status] - STATUS_PRIORITY[b.status]);
 
   return (
     <div>
@@ -114,47 +96,17 @@ export default function Profile() {
         {!loading && logs.length === 0 && <p className="muted" style={{ marginTop: 12 }}>No entries yet.</p>}
       </div>
 
-      <div className="panel">
-        <h3>Group</h3>
-        <p className="muted" style={{ marginTop: -6, marginBottom: 14 }}>
-          Everyone's name is visible, but workouts and body weight stay private until you two connect —
-          request access below, or accept a request someone sent you. You can also do this from the chat
-          panel's online list.
-        </p>
-        {connectionError && <p className="error-text">{connectionError}</p>}
-        {connectionsLoading ? (
-          <p className="muted">Loading…</p>
-        ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Last seen</th>
-                <th>Access</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedRows.map((row) => (
-                <tr key={row.profile.id}>
-                  <td>{row.profile.name}</td>
-                  <td className="muted">{relativeTime(row.profile.last_seen)}</td>
-                  <td>
-                    <ConnectionActions
-                      row={row}
-                      busy={busyId === row.profile.id || busyId === row.connection?.id}
-                      onRequest={requestAccess}
-                      onAccept={(id) => respond(id, "accepted")}
-                      onReject={(id) => respond(id, "rejected")}
-                      onRemove={removeConnection}
-                      onRequestAgain={requestAgain}
-                    />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
+      <Link to="/connections" className="card-link">
+        <div className="row between">
+          <div>
+            <strong>Friends &amp; connections</strong>
+            <p className="muted" style={{ margin: "2px 0 0", fontSize: 13 }}>
+              Manage who can see your workouts and body weight.
+            </p>
+          </div>
+          {incomingCount > 0 && <span className="chip focus">{incomingCount} pending</span>}
+        </div>
+      </Link>
     </div>
   );
 }

@@ -15,6 +15,7 @@ import WorkoutForm from "./pages/WorkoutForm";
 import WorkoutDetail from "./pages/WorkoutDetail";
 import Group from "./pages/Group";
 import Profile from "./pages/Profile";
+import Connections from "./pages/Connections";
 
 // One layout instance wraps every authenticated route via <Outlet/>, so Nav
 // and ChatPanel stay mounted (and the chat's realtime subscription stays
@@ -53,6 +54,7 @@ export default function App() {
             <Route path="/workouts/:id/edit" element={<WorkoutForm />} />
             <Route path="/group" element={<Group />} />
             <Route path="/profile" element={<Profile />} />
+            <Route path="/connections" element={<Connections />} />
           </Route>
         </Routes>
       </BrowserRouter>

@@ -1,5 +1,6 @@
 import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { useConnections } from "../hooks/useConnections";
 import { DashboardIcon, ExercisesIcon, WorkoutsIcon, ChatIcon, GroupIcon, ProfileIcon } from "./icons";
 
 const LINKS = [
@@ -17,8 +18,10 @@ interface NavProps {
 
 export default function Nav({ chatOpen, onToggleChat }: NavProps) {
   const { signOut, onlineUsers, user } = useAuth();
+  const { rows: connectionRows } = useConnections();
   const navigate = useNavigate();
   const othersOnline = Object.keys(onlineUsers).filter((id) => id !== user?.id).length;
+  const incomingRequests = connectionRows.filter((r) => r.status === "incoming_pending").length;
 
   async function handleSignOut() {
     await signOut();
@@ -33,6 +36,11 @@ export default function Nav({ chatOpen, onToggleChat }: NavProps) {
           {LINKS.map((l) => (
             <NavLink key={l.to} to={l.to} end={l.to === "/"}>
               {l.label}
+              {l.to === "/profile" && incomingRequests > 0 && (
+                <span className="chip focus" style={{ marginLeft: 6, padding: "1px 6px" }}>
+                  {incomingRequests}
+                </span>
+              )}
             </NavLink>
           ))}
           <button type="button" className="linklike" onClick={onToggleChat} aria-pressed={chatOpen}>
@@ -69,7 +77,12 @@ export default function Nav({ chatOpen, onToggleChat }: NavProps) {
         </button>
         {LINKS.slice(3).map((l) => (
           <NavLink key={l.to} to={l.to} end={l.to === "/"} className="bottom-nav-item">
-            <l.Icon />
+            <span style={{ position: "relative" }}>
+              <l.Icon />
+              {l.to === "/profile" && incomingRequests > 0 && (
+                <span className="bottom-nav-badge">{incomingRequests}</span>
+              )}
+            </span>
             <span>{l.label}</span>
           </NavLink>
         ))}
