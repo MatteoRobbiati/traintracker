@@ -38,6 +38,14 @@ export default function ChatPanel({ open, onClose }: ChatPanelProps) {
   const [activePersonId, setActivePersonId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  // Shared by the realtime subscription below and handleSend's own
+  // optimistic append -- our own INSERT round-trips back through that same
+  // subscription (everyone can select all messages), so without a dedupe
+  // check a just-sent message would briefly appear twice.
+  function addMessage(m: Message) {
+    setMessages((prev) => (prev.some((existing) => existing.id === m.id) ? prev : [...prev, m]));
+  }
+
   useEffect(() => {
     let cancelled = false;
 
@@ -58,7 +66,7 @@ export default function ChatPanel({ open, onClose }: ChatPanelProps) {
     const channel = supabase
       .channel("messages-feed")
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages" }, (payload) => {
-        setMessages((prev) => [...prev, payload.new as Message]);
+        addMessage(payload.new as Message);
       })
       .subscribe();
 
@@ -87,12 +95,24 @@ export default function ChatPanel({ open, onClose }: ChatPanelProps) {
     if (!body || !user) return;
     setSending(true);
     setError(null);
-    const { error } = await supabase.from("messages").insert({ sender_id: user.id, body, room });
+    // Append from the insert's own returned row rather than waiting on the
+    // realtime round-trip -- that round-trip is what "click send, message
+    // doesn't show up until a refresh" was actually waiting on (a slow or
+    // momentarily-dropped realtime connection meant it always beat this to
+    // showing the message). The subscription above still delivers everyone
+    // else's messages same as before, and dedupes against this one by id
+    // for when it also echoes our own insert back.
+    const { data, error } = await supabase
+      .from("messages")
+      .insert({ sender_id: user.id, body, room })
+      .select()
+      .single();
     setSending(false);
-    if (error) {
-      setError(error.message);
+    if (error || !data) {
+      setError(error?.message ?? "Failed to send message.");
       return;
     }
+    addMessage(data);
     setDraft("");
   }
 
