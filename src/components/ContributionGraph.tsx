@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, type CSSProperties } from "react";
 
 const DAY_MS = 86400000;
 const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -17,6 +17,10 @@ interface ContributionGraphProps {
   dates: string[];
   /** How many weeks of history to show. GitHub shows ~52; that's the point. */
   weeks?: number;
+  /** Overrides the page's own --ember/--ember-muted for this graph only --
+   * for showing someone else's calendar in *their* chosen accent color (see
+   * src/lib/theme.ts accentColors()) rather than the current viewer's. */
+  colorOverride?: { ember: string; emberMuted: string };
 }
 
 // A GitHub-contributions-style calendar: one column per week, one square per
@@ -24,7 +28,7 @@ interface ContributionGraphProps {
 // to streak logic (see src/lib/streak.ts) -- this is just a visual density
 // map, so a rest day shows as an empty square without implying anything
 // broke, which is the whole point of not being Duolingo about it.
-export default function ContributionGraph({ dates, weeks = 52 }: ContributionGraphProps) {
+export default function ContributionGraph({ dates, weeks = 52, colorOverride }: ContributionGraphProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const counts = useMemo(() => {
@@ -72,8 +76,12 @@ export default function ContributionGraph({ dates, weeks = 52 }: ContributionGra
     return "cg-l3";
   }
 
+  const overrideStyle = colorOverride
+    ? ({ "--ember": colorOverride.ember, "--ember-muted": colorOverride.emberMuted } as CSSProperties)
+    : undefined;
+
   return (
-    <div>
+    <div style={overrideStyle}>
       <div className="cg-scroll" ref={scrollRef}>
         <div className="cg-grid">
           {columns.map((col, i) => {
