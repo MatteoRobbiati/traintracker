@@ -88,6 +88,13 @@ behind a scroll a thumb has to discover first. Each tab is a real bordered
 chip (`.chat-room-tab`) even when inactive, not plain text, so it reads as
 an obviously selectable option.
 
+Sending a message appends it locally from the insert's own returned row
+(`.select().single()`), rather than waiting on the realtime
+`postgres_changes` subscription to echo it back — that round-trip could lag
+or drop, which read as "I click send and nothing happens until I refresh."
+The subscription still delivers everyone *else's* messages the same as
+before; a dedupe-by-`id` check covers it also echoing our own insert back.
+
 Dashboard shows a training **streak** (`src/lib/streak.ts`) — deliberately
 not the Duolingo kind: one rest day never breaks it, only a *second*
 consecutive untrained day does (train → rest → train keeps counting; train →
