@@ -59,8 +59,19 @@ create table public.exercises (
   primary_muscles    text[] not null default '{}',
   secondary_muscles  text[] not null default '{}',
   is_bodyweight      boolean not null default false,
+  is_dumbbell        boolean not null default false,  -- logged weight is per dumbbell; volume/effective weight doubles it
+  bar_weight_kg      numeric(5,2) check (bar_weight_kg >= 0), -- barbell exercises: logged weight is what's added, this is the bar itself
   created_by         uuid references public.profiles(id) on delete set null,
   created_at         timestamptz not null default now(),
+
+  -- The three affect weight/volume calculation differently (see
+  -- src/lib/format.ts effectiveWeight()) and don't compose -- the form only
+  -- lets you pick one "equipment" at a time.
+  constraint exercise_equipment_exclusive check (
+    (case when is_bodyweight then 1 else 0 end)
+    + (case when is_dumbbell then 1 else 0 end)
+    + (case when bar_weight_kg is not null then 1 else 0 end) <= 1
+  ),
 
   constraint primary_muscles_valid check (
     primary_muscles <@ array[
@@ -128,6 +139,24 @@ create table public.endurance_details (
   distance_km     numeric(6,2) check (distance_km >= 0),
   session_detail  text               -- free text: routes/boulders sent, splits, etc.
 );
+
+-- ============================================================================
+-- cardio_blocks — cardio *within* a strength workout (warmup/cooldown on a
+-- treadmill/bike/elliptical, or just a standalone cardio finisher), distinct
+-- from a whole endurance-type workout above. Multiple per workout, ordered.
+-- ============================================================================
+create table public.cardio_blocks (
+  id                uuid primary key default gen_random_uuid(),
+  workout_id        uuid not null references public.workouts(id) on delete cascade,
+  activity          text not null check (activity in ('run', 'walk', 'bike', 'elliptical')),
+  purpose           text not null default 'standalone' check (purpose in ('warmup', 'cooldown', 'standalone')),
+  duration_minutes  integer check (duration_minutes >= 0),
+  incline_percent   numeric(4,1) check (incline_percent >= 0),
+  speed_kmh         numeric(4,1) check (speed_kmh >= 0),
+  block_order       integer not null default 0
+);
+
+create index cardio_blocks_workout_idx on public.cardio_blocks (workout_id, block_order);
 
 -- ============================================================================
 -- workout_templates — reusable session plans, strictly private per user
@@ -278,6 +307,7 @@ alter table public.sets             enable row level security;
 alter table public.connections      enable row level security;
 alter table public.messages         enable row level security;
 alter table public.endurance_details enable row level security;
+alter table public.cardio_blocks    enable row level security;
 alter table public.workout_templates enable row level security;
 alter table public.template_sets     enable row level security;
 
@@ -350,6 +380,24 @@ create policy "endurance_update_own" on public.endurance_details
     exists (select 1 from public.workouts w where w.id = workout_id and w.user_id = auth.uid())
   );
 create policy "endurance_delete_own" on public.endurance_details
+  for delete to authenticated using (
+    exists (select 1 from public.workouts w where w.id = workout_id and w.user_id = auth.uid())
+  );
+
+-- cardio_blocks (ownership/visibility follows the parent workout, same as sets)
+create policy "cardio_blocks_select_own_or_connected" on public.cardio_blocks
+  for select to authenticated using (
+    exists (select 1 from public.workouts w where w.id = workout_id and public.is_connected(w.user_id))
+  );
+create policy "cardio_blocks_insert_own" on public.cardio_blocks
+  for insert to authenticated with check (
+    exists (select 1 from public.workouts w where w.id = workout_id and w.user_id = auth.uid())
+  );
+create policy "cardio_blocks_update_own" on public.cardio_blocks
+  for update to authenticated using (
+    exists (select 1 from public.workouts w where w.id = workout_id and w.user_id = auth.uid())
+  );
+create policy "cardio_blocks_delete_own" on public.cardio_blocks
   for delete to authenticated using (
     exists (select 1 from public.workouts w where w.id = workout_id and w.user_id = auth.uid())
   );

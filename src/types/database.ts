@@ -31,6 +31,11 @@ export type Exercise = {
   primary_muscles: Muscle[];
   secondary_muscles: Muscle[];
   is_bodyweight: boolean;
+  // Mutually exclusive with is_bodyweight and with each other -- see
+  // src/lib/format.ts effectiveWeight() and the exercise_equipment_exclusive
+  // CHECK constraint in supabase/schema.sql.
+  is_dumbbell: boolean;
+  bar_weight_kg: number | null;
   created_by: string | null;
   created_at: string;
 };
@@ -56,6 +61,18 @@ export type EnduranceDetails = {
   discipline: string | null;
   distance_km: number | null;
   session_detail: string | null;
+};
+
+// Cardio *within* a strength workout -- see src/constants/cardio.ts.
+export type CardioBlock = {
+  id: string;
+  workout_id: string;
+  activity: string;
+  purpose: string;
+  duration_minutes: number | null;
+  incline_percent: number | null;
+  speed_kmh: number | null;
+  block_order: number;
 };
 
 export type WorkoutSet = {
@@ -143,6 +160,10 @@ export type Database = {
       endurance_details: Table<
         EnduranceDetails,
         Pick<EnduranceDetails, "workout_id" | "sport"> & Partial<EnduranceDetails>
+      >;
+      cardio_blocks: Table<
+        CardioBlock,
+        Pick<CardioBlock, "workout_id" | "activity"> & Partial<CardioBlock>
       >;
       workout_templates: Table<
         WorkoutTemplate,

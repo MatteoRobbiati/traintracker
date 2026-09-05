@@ -66,9 +66,22 @@ Use this link to start logging: [https://matteorobbiati.github.io/traintracker/l
 | `/profile` | Body weight log; links to `/connections` |
 | `/connections` | Group member list, "last seen", and connection requests (was folded into Profile, split out for room to grow) |
 
-Bodyweight-exercise volume is computed as `(latest body weight + added weight) × reps`;
-loaded exercises are `weight × reps`. Added weight may be negative for
-assisted movements.
+An exercise has one **equipment** kind, picked in ExerciseForm and mutually
+exclusive by a DB CHECK constraint (`exercise_equipment_exclusive`) — each
+changes how logged `weight` relates to what's actually moved
+(`src/lib/format.ts effectiveWeight()`/`setVolume()`):
+- **Standard** (default) — logged weight is the full working weight, as-is.
+- **Bodyweight** — logged weight is *added* on top of body weight (can be
+  negative for assisted movements).
+- **Dumbbell** — logged weight is per dumbbell; the total/volume doubles it.
+- **Barbell** — logged weight is what's *added*; the exercise also carries
+  its own bar weight (kg, editable, default 20), added on top.
+
+Everywhere a set/PB/volume shows up (WorkoutForm, WorkoutDetail, Group,
+ExerciseDetail) says so explicitly — a chip on the exercise ("🏋️ Barbell —
++20 kg bar", "🏋️ Dumbbell — ×2 for volume") and a relabeled weight column
+header ("Weight (added to bar)", "Weight (per dumbbell)") — rather than
+silently changing what a plain "weight" number means.
 
 Workouts are one of two types, chosen at creation and fixed after:
 **strength** (exercises → sets, as above) or **endurance** — climbing,
@@ -77,6 +90,14 @@ distance, and free-text session detail (`src/constants/sports.ts`; DB row in
 `endurance_details`). Endurance sessions don't produce `sets`, so they don't
 appear in Group's volume/exercise charts — that's the expected scope, not a
 bug.
+
+A **strength** workout can also carry one or more **cardio blocks**
+(`src/constants/cardio.ts`, DB table `cardio_blocks`) — run/walk/bike/
+elliptical with duration/incline/speed, tagged warmup/cooldown/standalone.
+This is deliberately separate from picking "Endurance" as the whole
+workout's type: it's for the 10-minute treadmill warmup before a lifting
+session, not a session that's cardio end to end. Ownership/visibility
+follows the parent workout, same RLS pattern as `sets`.
 
 Chat is split into topic rooms (`src/constants/rooms.ts`: General, Gym,
 Climbing, Bodyweight, Running) — a fixed list for now, not user-creatable.
@@ -103,6 +124,17 @@ Both WorkoutForm (while building a new/edited workout) and WorkoutDetail
 lets the owner edit a logged strength workout's weight/reps/rest values
 inline, without leaving the page — the full `/edit` form is still there for
 structural changes (adding/removing whole exercises).
+
+A new (not-yet-submitted) workout **autosaves as a draft**
+(`src/lib/workoutDraft.ts`, `localStorage`) on every change — switching to
+another section of the app, or just closing the tab, doesn't lose what's
+been typed in. Reopening "Log a workout" silently restores it (a small
+banner + "Discard draft" button is the only sign it happened), and Dashboard
+surfaces a "📝 Workout in progress" card linking back to it so you don't
+have to remember it exists. The draft clears itself once the workout is
+actually submitted, or on explicit discard. Editing an *existing* logged
+workout doesn't touch this at all — that's already backed by the database,
+there's nothing to lose.
 
 Personal bests come in two independent flavors (`src/lib/personalBest.ts`),
 both shown per exercise on its detail page (your own data) and as two
