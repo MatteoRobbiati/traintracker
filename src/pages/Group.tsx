@@ -14,7 +14,7 @@ import {
   Cell,
 } from "recharts";
 import { supabase } from "../lib/supabaseClient";
-import { formatDate, setVolume } from "../lib/format";
+import { formatDate, setVolume, type Equipment } from "../lib/format";
 import { isBetterSet, type BestSetCandidate } from "../lib/personalBest";
 import { computeStreak } from "../lib/streak";
 import MuscleMap from "../components/MuscleMap";
@@ -33,6 +33,8 @@ interface SetRow {
     id: string;
     name: string;
     is_bodyweight: boolean;
+    is_dumbbell: boolean;
+    bar_weight_kg: number | null;
     primary_muscles: Muscle[];
     secondary_muscles: Muscle[];
   } | null;
@@ -72,7 +74,7 @@ export default function Group() {
         supabase
           .from("sets")
           .select(
-            "workout_id, weight, reps, workout:workouts(user_id, date), exercise:exercises(id, name, is_bodyweight, primary_muscles, secondary_muscles)"
+            "workout_id, weight, reps, workout:workouts(user_id, date), exercise:exercises(id, name, is_bodyweight, is_dumbbell, bar_weight_kg, primary_muscles, secondary_muscles)"
           ),
         supabase
           .from("body_weight_logs")
@@ -119,7 +121,11 @@ export default function Group() {
           primaryMuscles: r.exercise!.primary_muscles,
           secondaryMuscles: r.exercise!.secondary_muscles,
           volume: setVolume({
-            isBodyweight: r.exercise!.is_bodyweight,
+            equipment: {
+              isBodyweight: r.exercise!.is_bodyweight,
+              isDumbbell: r.exercise!.is_dumbbell,
+              barWeightKg: r.exercise!.bar_weight_kg,
+            } satisfies Equipment,
             weight: r.weight,
             reps: r.reps,
             bodyWeightKg: latestBodyWeight[r.workout!.user_id] ?? null,

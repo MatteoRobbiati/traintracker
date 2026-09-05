@@ -2,9 +2,18 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
 import { useAuth } from "../context/AuthContext";
-import { setVolume } from "../lib/format";
+import { setVolume, type Equipment } from "../lib/format";
 import { SPORTS, SPORT_LABELS, CLIMBING_DISCIPLINES, CLIMBING_DISCIPLINE_LABELS } from "../constants/sports";
+import {
+  CARDIO_ACTIVITIES,
+  CARDIO_ACTIVITY_LABELS,
+  CARDIO_PURPOSES,
+  CARDIO_PURPOSE_LABELS,
+  type CardioActivity,
+  type CardioPurpose,
+} from "../constants/cardio";
 import { saveWorkoutAsTemplate } from "../lib/templates";
+import { loadDraft, saveDraft, clearDraft, draftHasContent } from "../lib/workoutDraft";
 import SearchableSelect from "../components/SearchableSelect";
 import type { WorkoutTemplate, WorkoutType } from "../types/database";
 
@@ -12,6 +21,16 @@ interface ExerciseOption {
   id: string;
   name: string;
   is_bodyweight: boolean;
+  is_dumbbell: boolean;
+  bar_weight_kg: number | null;
+}
+
+function equipmentOf(exercise: ExerciseOption | undefined): Equipment {
+  return {
+    isBodyweight: !!exercise?.is_bodyweight,
+    isDumbbell: !!exercise?.is_dumbbell,
+    barWeightKg: exercise?.bar_weight_kg ?? null,
+  };
 }
 
 interface SetRow {
@@ -26,8 +45,21 @@ interface ExerciseBlock {
   sets: SetRow[];
 }
 
+interface CardioBlockDraft {
+  key: string;
+  activity: CardioActivity;
+  purpose: CardioPurpose;
+  durationMinutes: string;
+  inclinePercent: string;
+  speedKmh: string;
+}
+
 function emptySet(): SetRow {
   return { weight: "0", reps: "", restSeconds: "" };
+}
+
+function emptyCardioBlock(purpose: CardioPurpose = "warmup"): CardioBlockDraft {
+  return { key: crypto.randomUUID(), activity: "run", purpose, durationMinutes: "", inclinePercent: "", speedKmh: "" };
 }
 
 function formatElapsed(startedAt: number): string {
@@ -77,6 +109,10 @@ export default function WorkoutForm() {
   const [notes, setNotes] = useState("");
   const [duration, setDuration] = useState("");
   const [blocks, setBlocks] = useState<ExerciseBlock[]>([]);
+  // Cardio *within* a strength workout (warmup/cooldown on a
+  // treadmill/bike/elliptical, or a standalone finisher) -- distinct from
+  // picking "Endurance" as the whole workout's type.
+  const [cardioBlocks, setCardioBlocks] = useState<CardioBlockDraft[]>([]);
 
   // Endurance-only fields
   const [sport, setSport] = useState<string>(SPORTS[0]);
@@ -113,6 +149,104 @@ export default function WorkoutForm() {
   const [savingTemplate, setSavingTemplate] = useState(false);
   const [templateSaved, setTemplateSaved] = useState(false);
 
+  // Autosaved draft (localStorage, see src/lib/workoutDraft.ts) -- only for
+  // a new, not-yet-submitted workout. Editing an existing one is already
+  // backed by the database, so it doesn't touch this.
+  const [draftRestoredAt, setDraftRestoredAt] = useState<string | null>(null);
+
+  // Restore on mount, before the user's typed anything -- silently, not a
+  // prompt, so reopening "Log a workout" after switching sections just
+  // picks up where you left off. The banner + "Discard" button (rendered
+  // near the top of the form) are the only visible sign it happened.
+  useEffect(() => {
+    if (isEdit) return;
+    const draft = loadDraft();
+    if (!draft || !draftHasContent(draft)) return;
+    setWorkoutType(draft.workoutType);
+    setDate(draft.date);
+    setWarmup(draft.warmup);
+    setNotes(draft.notes);
+    setDuration(draft.duration);
+    setBlocks(draft.blocks.map((b) => ({ key: crypto.randomUUID(), exerciseId: b.exerciseId, sets: b.sets })));
+    setCardioBlocks(
+      draft.cardioBlocks.map((c) => ({
+        key: crypto.randomUUID(),
+        activity: c.activity as CardioActivity,
+        purpose: c.purpose as CardioPurpose,
+        durationMinutes: c.durationMinutes,
+        inclinePercent: c.inclinePercent,
+        speedKmh: c.speedKmh,
+      }))
+    );
+    setSport(draft.sport);
+    setCustomSport(draft.customSport);
+    setDiscipline(draft.discipline);
+    setDistanceKm(draft.distanceKm);
+    setSessionDetail(draft.sessionDetail);
+    setDraftRestoredAt(draft.savedAt);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Autosave on every change. Clears instead of writing once the form is
+  // back to nothing worth keeping (e.g. after discarding), so an abandoned
+  // blank form doesn't leave a phantom "in progress" banner around.
+  useEffect(() => {
+    if (isEdit) return;
+    const draft = {
+      workoutType,
+      date,
+      warmup,
+      notes,
+      duration,
+      blocks: blocks.map((b) => ({ exerciseId: b.exerciseId, sets: b.sets })),
+      cardioBlocks: cardioBlocks.map((c) => ({
+        activity: c.activity,
+        purpose: c.purpose,
+        durationMinutes: c.durationMinutes,
+        inclinePercent: c.inclinePercent,
+        speedKmh: c.speedKmh,
+      })),
+      sport,
+      customSport,
+      discipline,
+      distanceKm,
+      sessionDetail,
+    };
+    if (draftHasContent(draft)) saveDraft(draft);
+    else clearDraft();
+  }, [
+    isEdit,
+    workoutType,
+    date,
+    warmup,
+    notes,
+    duration,
+    blocks,
+    cardioBlocks,
+    sport,
+    customSport,
+    discipline,
+    distanceKm,
+    sessionDetail,
+  ]);
+
+  function discardDraft() {
+    clearDraft();
+    setDraftRestoredAt(null);
+    setWorkoutType("strength");
+    setDate(new Date().toISOString().slice(0, 10));
+    setWarmup("");
+    setNotes("");
+    setDuration("");
+    setBlocks([]);
+    setCardioBlocks([]);
+    setSport(SPORTS[0]);
+    setCustomSport("");
+    setDiscipline("");
+    setDistanceKm("");
+    setSessionDetail("");
+  }
+
   async function loadTemplateList(userId: string) {
     const { data } = await supabase
       .from("workout_templates")
@@ -126,7 +260,7 @@ export default function WorkoutForm() {
     if (!user) return;
     supabase
       .from("exercises")
-      .select("id, name, is_bodyweight")
+      .select("id, name, is_bodyweight, is_dumbbell, bar_weight_kg")
       .order("name")
       .then(({ data }) => setExerciseOptions(data ?? []));
     supabase
@@ -175,7 +309,10 @@ export default function WorkoutForm() {
           setSessionDetail(details.session_detail ?? "");
         }
       } else {
-        const { data: s } = await supabase.from("sets").select("*").eq("workout_id", id!).order("set_order");
+        const [{ data: s }, { data: cardio }] = await Promise.all([
+          supabase.from("sets").select("*").eq("workout_id", id!).order("set_order"),
+          supabase.from("cardio_blocks").select("*").eq("workout_id", id!).order("block_order"),
+        ]);
         const loadedBlocks: ExerciseBlock[] = [];
         for (const row of s ?? []) {
           const last = loadedBlocks[loadedBlocks.length - 1];
@@ -191,6 +328,16 @@ export default function WorkoutForm() {
           }
         }
         setBlocks(loadedBlocks);
+        setCardioBlocks(
+          (cardio ?? []).map((c) => ({
+            key: c.id,
+            activity: c.activity as CardioActivity,
+            purpose: c.purpose as CardioPurpose,
+            durationMinutes: c.duration_minutes != null ? String(c.duration_minutes) : "",
+            inclinePercent: c.incline_percent != null ? String(c.incline_percent) : "",
+            speedKmh: c.speed_kmh != null ? String(c.speed_kmh) : "",
+          }))
+        );
       }
       setLoading(false);
     }
@@ -320,6 +467,18 @@ export default function WorkoutForm() {
     cancelRest(key);
   }
 
+  function addCardioBlock(purpose?: CardioPurpose) {
+    setCardioBlocks((prev) => [...prev, emptyCardioBlock(purpose)]);
+  }
+
+  function updateCardioBlock(key: string, patch: Partial<CardioBlockDraft>) {
+    setCardioBlocks((prev) => prev.map((c) => (c.key === key ? { ...c, ...patch } : c)));
+  }
+
+  function removeCardioBlock(key: string) {
+    setCardioBlocks((prev) => prev.filter((c) => c.key !== key));
+  }
+
   function addSet(key: string) {
     setBlocks((prev) => prev.map((b) => (b.key === key ? { ...b, sets: [...b.sets, emptySet()] } : b)));
   }
@@ -431,11 +590,14 @@ export default function WorkoutForm() {
       }
     } else {
       if (isEdit) {
-        // Simplest consistent way to persist edited sets: replace them all
-        // rather than diffing add/remove/reorder client-side.
-        const { error: deleteError } = await supabase.from("sets").delete().eq("workout_id", id!);
-        if (deleteError) {
-          setError(deleteError.message);
+        // Simplest consistent way to persist edited sets/cardio: replace
+        // them all rather than diffing add/remove/reorder client-side.
+        const [{ error: deleteError }, { error: deleteCardioError }] = await Promise.all([
+          supabase.from("sets").delete().eq("workout_id", id!),
+          supabase.from("cardio_blocks").delete().eq("workout_id", id!),
+        ]);
+        if (deleteError || deleteCardioError) {
+          setError((deleteError ?? deleteCardioError)!.message);
           setSubmitting(false);
           return;
         }
@@ -450,14 +612,27 @@ export default function WorkoutForm() {
           set_order: blockIndex * 1000 + setIndex,
         }))
       );
-      const { error: setsError } = await supabase.from("sets").insert(setRows);
+      const cardioRows = cardioBlocks.map((c, i) => ({
+        workout_id: workoutId!,
+        activity: c.activity,
+        purpose: c.purpose,
+        duration_minutes: c.durationMinutes ? Number(c.durationMinutes) : null,
+        incline_percent: c.inclinePercent ? Number(c.inclinePercent) : null,
+        speed_kmh: c.speedKmh ? Number(c.speedKmh) : null,
+        block_order: i,
+      }));
+      const [{ error: setsError }, { error: cardioError }] = await Promise.all([
+        setRows.length > 0 ? supabase.from("sets").insert(setRows) : Promise.resolve({ error: null }),
+        cardioRows.length > 0 ? supabase.from("cardio_blocks").insert(cardioRows) : Promise.resolve({ error: null }),
+      ]);
       setSubmitting(false);
-      if (setsError) {
-        setError(setsError.message);
+      if (setsError || cardioError) {
+        setError((setsError ?? cardioError)!.message);
         return;
       }
     }
 
+    if (!isEdit) clearDraft();
     navigate(`/workouts/${workoutId}`);
   }
 
@@ -466,6 +641,16 @@ export default function WorkoutForm() {
   return (
     <div>
       <h1>{isEdit ? "Edit workout" : "Log a workout"}</h1>
+      {draftRestoredAt && (
+        <div className="panel" style={{ marginBottom: 16, borderColor: "var(--focus)" }}>
+          <div className="row between">
+            <span className="chip focus">📝 Workout in progress — continuing where you left off</span>
+            <button type="button" className="ghost" onClick={discardDraft}>
+              Discard draft
+            </button>
+          </div>
+        </div>
+      )}
       <form className="form-grid panel" onSubmit={handleSubmit}>
         {!isEdit && templates.length > 0 && (
           <div className="field">
@@ -545,6 +730,94 @@ export default function WorkoutForm() {
             </div>
 
             <div>
+              <h3>Cardio</h3>
+              <p className="muted" style={{ fontSize: 12, marginTop: -6, marginBottom: 12 }}>
+                Warmup, cooldown, or a standalone finisher — separate from picking "Endurance" as the whole
+                workout's type.
+              </p>
+              <div className="stack" style={{ gap: 12 }}>
+                {cardioBlocks.map((c) => (
+                  <div key={c.key} className="panel">
+                    <div className="row between">
+                      <div className="row">
+                        <select
+                          value={c.activity}
+                          onChange={(e) => updateCardioBlock(c.key, { activity: e.target.value as CardioActivity })}
+                          style={{ width: "auto" }}
+                        >
+                          {CARDIO_ACTIVITIES.map((a) => (
+                            <option key={a} value={a}>
+                              {CARDIO_ACTIVITY_LABELS[a]}
+                            </option>
+                          ))}
+                        </select>
+                        <select
+                          value={c.purpose}
+                          onChange={(e) => updateCardioBlock(c.key, { purpose: e.target.value as CardioPurpose })}
+                          style={{ width: "auto" }}
+                        >
+                          {CARDIO_PURPOSES.map((p) => (
+                            <option key={p} value={p}>
+                              {CARDIO_PURPOSE_LABELS[p]}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <button type="button" className="ghost" onClick={() => removeCardioBlock(c.key)}>
+                        Remove
+                      </button>
+                    </div>
+                    <div className="row" style={{ marginTop: 10 }}>
+                      <div className="field" style={{ minWidth: 110 }}>
+                        <label htmlFor={`cardio-duration-${c.key}`}>Duration (min)</label>
+                        <input
+                          id={`cardio-duration-${c.key}`}
+                          type="number"
+                          inputMode="numeric"
+                          min={0}
+                          value={c.durationMinutes}
+                          onChange={(e) => updateCardioBlock(c.key, { durationMinutes: e.target.value })}
+                        />
+                      </div>
+                      <div className="field" style={{ minWidth: 110 }}>
+                        <label htmlFor={`cardio-incline-${c.key}`}>Incline (%)</label>
+                        <input
+                          id={`cardio-incline-${c.key}`}
+                          type="number"
+                          inputMode="decimal"
+                          min={0}
+                          step="0.5"
+                          value={c.inclinePercent}
+                          onChange={(e) => updateCardioBlock(c.key, { inclinePercent: e.target.value })}
+                        />
+                      </div>
+                      <div className="field" style={{ minWidth: 110 }}>
+                        <label htmlFor={`cardio-speed-${c.key}`}>Speed (km/h)</label>
+                        <input
+                          id={`cardio-speed-${c.key}`}
+                          type="number"
+                          inputMode="decimal"
+                          min={0}
+                          step="0.1"
+                          value={c.speedKmh}
+                          onChange={(e) => updateCardioBlock(c.key, { speedKmh: e.target.value })}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="row" style={{ marginTop: 12, gap: 8 }}>
+                <button type="button" onClick={() => addCardioBlock("warmup")}>
+                  + Add warmup
+                </button>
+                <button type="button" onClick={() => addCardioBlock("cooldown")}>
+                  + Add cooldown
+                </button>
+              </div>
+            </div>
+
+            <div>
               <h3>Exercises</h3>
               {exerciseOptions.length === 0 && (
                 <p className="muted">No exercises in the library yet — add one first.</p>
@@ -553,6 +826,15 @@ export default function WorkoutForm() {
               <div className="stack" style={{ gap: 16 }}>
                 {blocks.map((block) => {
                   const exercise = exerciseOptions.find((e) => e.id === block.exerciseId);
+                  const equipment = equipmentOf(exercise);
+                  const showVolumeCol = equipment.isBodyweight || equipment.isDumbbell || equipment.barWeightKg != null;
+                  const weightHeader = equipment.isBodyweight
+                    ? "Added weight"
+                    : equipment.isDumbbell
+                      ? "Weight (per dumbbell)"
+                      : equipment.barWeightKg != null
+                        ? "Weight (added to bar)"
+                        : "Weight";
                   return (
                     <div key={block.key} className="panel">
                       <div className="row between">
@@ -566,22 +848,32 @@ export default function WorkoutForm() {
                           Remove
                         </button>
                       </div>
+                      {equipment.isDumbbell && (
+                        <p className="muted" style={{ fontSize: 12, margin: "8px 0 0" }}>
+                          🏋️ Dumbbell — volume counts both (×2).
+                        </p>
+                      )}
+                      {equipment.barWeightKg != null && (
+                        <p className="muted" style={{ fontSize: 12, margin: "8px 0 0" }}>
+                          🏋️ Barbell — +{equipment.barWeightKg} kg bar added on top.
+                        </p>
+                      )}
 
                       <div className="table-scroll" style={{ marginTop: 10 }}>
                       <table>
                         <thead>
                           <tr>
-                            <th>{exercise?.is_bodyweight ? "Added weight" : "Weight"}</th>
+                            <th>{weightHeader}</th>
                             <th>Reps</th>
                             <th>Rest (s)</th>
-                            {exercise?.is_bodyweight && <th>Volume</th>}
+                            {showVolumeCol && <th>Volume</th>}
                             <th />
                           </tr>
                         </thead>
                         <tbody>
                           {block.sets.map((s, i) => {
                             const volume = setVolume({
-                              isBodyweight: !!exercise?.is_bodyweight,
+                              equipment,
                               weight: Number(s.weight) || 0,
                               reps: Number(s.reps) || 0,
                               bodyWeightKg,
@@ -614,7 +906,7 @@ export default function WorkoutForm() {
                                     onChange={(e) => updateSet(block.key, i, { restSeconds: e.target.value })}
                                   />
                                 </td>
-                                {exercise?.is_bodyweight && (
+                                {showVolumeCol && (
                                   <td className="muted">{volume ? volume.toFixed(0) : "—"}</td>
                                 )}
                                 <td>

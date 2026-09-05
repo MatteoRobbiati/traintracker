@@ -6,6 +6,12 @@ import MuscleChecklist from "../components/MuscleChecklist";
 import MuscleMap from "../components/MuscleMap";
 import type { Muscle } from "../constants/muscles";
 
+// The three affect weight/volume calculation differently (see
+// src/lib/format.ts effectiveWeight()) and don't compose -- picking one here
+// resets the others, matching the exercise_equipment_exclusive DB constraint.
+type EquipmentKind = "none" | "bodyweight" | "dumbbell" | "barbell";
+const DEFAULT_BAR_WEIGHT = "20";
+
 export default function ExerciseForm() {
   const { id } = useParams();
   const isEdit = Boolean(id);
@@ -14,7 +20,8 @@ export default function ExerciseForm() {
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [isBodyweight, setIsBodyweight] = useState(false);
+  const [equipment, setEquipment] = useState<EquipmentKind>("none");
+  const [barWeight, setBarWeight] = useState(DEFAULT_BAR_WEIGHT);
   const [primary, setPrimary] = useState<Muscle[]>([]);
   const [secondary, setSecondary] = useState<Muscle[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -32,7 +39,12 @@ export default function ExerciseForm() {
         if (data) {
           setName(data.name);
           setDescription(data.description ?? "");
-          setIsBodyweight(data.is_bodyweight);
+          if (data.is_bodyweight) setEquipment("bodyweight");
+          else if (data.is_dumbbell) setEquipment("dumbbell");
+          else if (data.bar_weight_kg != null) {
+            setEquipment("barbell");
+            setBarWeight(String(data.bar_weight_kg));
+          } else setEquipment("none");
           setPrimary(data.primary_muscles);
           setSecondary(data.secondary_muscles);
         }
@@ -61,7 +73,9 @@ export default function ExerciseForm() {
     const payload = {
       name: name.trim(),
       description: description.trim() || null,
-      is_bodyweight: isBodyweight,
+      is_bodyweight: equipment === "bodyweight",
+      is_dumbbell: equipment === "dumbbell",
+      bar_weight_kg: equipment === "barbell" ? Number(barWeight) || 0 : null,
       primary_muscles: primary,
       secondary_muscles: secondary,
     };
@@ -93,15 +107,55 @@ export default function ExerciseForm() {
           <label htmlFor="description">Description / cues</label>
           <textarea id="description" rows={3} value={description} onChange={(e) => setDescription(e.target.value)} />
         </div>
-        <label className="row" style={{ cursor: "pointer" }}>
-          <input
-            type="checkbox"
-            style={{ width: "auto" }}
-            checked={isBodyweight}
-            onChange={(e) => setIsBodyweight(e.target.checked)}
-          />
-          This is a bodyweight exercise
-        </label>
+        <div className="field">
+          <label>Equipment</label>
+          <div className="row">
+            <button type="button" className={equipment === "none" ? "primary" : ""} onClick={() => setEquipment("none")}>
+              Standard
+            </button>
+            <button
+              type="button"
+              className={equipment === "bodyweight" ? "primary" : ""}
+              onClick={() => setEquipment("bodyweight")}
+            >
+              Bodyweight
+            </button>
+            <button
+              type="button"
+              className={equipment === "dumbbell" ? "primary" : ""}
+              onClick={() => setEquipment("dumbbell")}
+            >
+              Dumbbell
+            </button>
+            <button
+              type="button"
+              className={equipment === "barbell" ? "primary" : ""}
+              onClick={() => setEquipment("barbell")}
+            >
+              Barbell
+            </button>
+          </div>
+          <p className="muted" style={{ fontSize: 12, margin: "4px 0 0" }}>
+            {equipment === "bodyweight" && "Logged weight is added weight on top of body weight (can be negative for assisted)."}
+            {equipment === "dumbbell" && "Logged weight is per dumbbell — volume/total doubles it automatically."}
+            {equipment === "barbell" && "Logged weight is what's added — the bar's own weight below is added on top."}
+            {equipment === "none" && "Logged weight is the full working weight, as-is."}
+          </p>
+          {equipment === "barbell" && (
+            <div className="field" style={{ maxWidth: 160, marginTop: 8 }}>
+              <label htmlFor="barWeight">Bar weight (kg)</label>
+              <input
+                id="barWeight"
+                type="number"
+                inputMode="decimal"
+                min={0}
+                step="0.5"
+                value={barWeight}
+                onChange={(e) => setBarWeight(e.target.value)}
+              />
+            </div>
+          )}
+        </div>
 
         <MuscleChecklist label="Primary muscles" selected={primary} disabledMuscles={secondary} onChange={setPrimary} />
         <MuscleChecklist

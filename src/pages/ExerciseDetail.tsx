@@ -2,11 +2,15 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
 import { useAuth } from "../context/AuthContext";
-import { formatDate, setVolume } from "../lib/format";
+import { formatDate, setVolume, effectiveWeight, type Equipment } from "../lib/format";
 import { isBetterSet, bestVolumeSession, type BestSetCandidate, type BestVolumeCandidate } from "../lib/personalBest";
 import MuscleMap from "../components/MuscleMap";
 import { MUSCLE_LABELS } from "../constants/muscles";
 import type { Exercise } from "../types/database";
+
+function equipmentOf(exercise: Exercise): Equipment {
+  return { isBodyweight: exercise.is_bodyweight, isDumbbell: exercise.is_dumbbell, barWeightKg: exercise.bar_weight_kg };
+}
 
 export default function ExerciseDetail() {
   const { id } = useParams();
@@ -48,25 +52,27 @@ export default function ExerciseDetail() {
         .limit(1)
         .maybeSingle(),
     ]).then(([{ data }, { data: bw }]) => {
-      const isBodyweight = exercise?.is_bodyweight ?? false;
+      if (!exercise) return;
+      const equipment = equipmentOf(exercise);
       const bodyWeightKg = bw?.weight_kg ?? null;
       let best: BestSetCandidate | null = null;
       const volumeSets = ((data as any[]) ?? []).map((row) => {
         const candidate: BestSetCandidate = { weight: row.weight, reps: row.reps, date: row.workout.date };
-        if (isBetterSet(candidate, best, isBodyweight)) best = candidate;
+        if (isBetterSet(candidate, best, equipment.isBodyweight)) best = candidate;
         return {
           workoutId: row.workout_id,
           date: row.workout.date,
-          volume: setVolume({ isBodyweight, weight: row.weight, reps: row.reps, bodyWeightKg }),
+          volume: setVolume({ equipment, weight: row.weight, reps: row.reps, bodyWeightKg }),
         };
       });
       setPersonalBest(best);
       setBestVolume(bestVolumeSession(volumeSets));
     });
-    // Depends on exercise.is_bodyweight too, but that's only known once the
-    // exercise itself has loaded -- re-runs once it has.
+    // Depends on exercise (is_bodyweight/is_dumbbell/bar_weight_kg) too, but
+    // that's only known once the exercise itself has loaded -- re-runs once
+    // it has.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, user, exercise?.is_bodyweight]);
+  }, [id, user, exercise]);
 
   async function handleDelete() {
     if (!id || !confirm("Delete this exercise? This can't be undone.")) return;
@@ -90,7 +96,13 @@ export default function ExerciseDetail() {
     <div>
       <div className="row between">
         <h1>{exercise.name}</h1>
-        {exercise.is_bodyweight && <span className="chip focus">Bodyweight</span>}
+        <div className="row" style={{ gap: 6 }}>
+          {exercise.is_bodyweight && <span className="chip focus">Bodyweight</span>}
+          {exercise.is_dumbbell && <span className="chip focus">Dumbbell — ×2 for volume</span>}
+          {exercise.bar_weight_kg != null && (
+            <span className="chip focus">Barbell — +{exercise.bar_weight_kg} kg bar</span>
+          )}
+        </div>
       </div>
 
       {exercise.description && <p className="muted">{exercise.description}</p>}
@@ -105,8 +117,15 @@ export default function ExerciseDetail() {
               <h2 style={{ margin: 0 }}>
                 {exercise.is_bodyweight
                   ? `${personalBest.reps} reps${personalBest.weight ? ` (${personalBest.weight > 0 ? "+" : ""}${personalBest.weight} kg)` : ""}`
-                  : `${personalBest.weight} kg × ${personalBest.reps}`}
+                  : `${effectiveWeight(equipmentOf(exercise), personalBest.weight, null)} kg × ${personalBest.reps}`}
               </h2>
+              {(exercise.is_dumbbell || exercise.bar_weight_kg != null) && (
+                <p className="muted" style={{ fontSize: 12, margin: "2px 0 0" }}>
+                  {exercise.is_dumbbell
+                    ? `${personalBest.weight} kg × 2 dumbbells`
+                    : `${personalBest.weight} kg + ${exercise.bar_weight_kg} kg bar`}
+                </p>
+              )}
               <p className="muted" style={{ fontSize: 12, margin: "2px 0 0" }}>
                 {formatDate(personalBest.date)}
               </p>

@@ -105,7 +105,11 @@ export default function Exercises() {
           <Link key={ex.id} to={`/exercises/${ex.id}`} className="card-link">
             <div className="row between">
               <strong>{ex.name}</strong>
-              {ex.is_bodyweight && <span className="chip focus">Bodyweight</span>}
+              <div className="row" style={{ gap: 6 }}>
+                {ex.is_bodyweight && <span className="chip focus">Bodyweight</span>}
+                {ex.is_dumbbell && <span className="chip focus">Dumbbell</span>}
+                {ex.bar_weight_kg != null && <span className="chip focus">Barbell</span>}
+              </div>
             </div>
             <div className="row" style={{ marginTop: 6, gap: 6 }}>
               {ex.primary_muscles.map((m) => (

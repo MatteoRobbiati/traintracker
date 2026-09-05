@@ -5,6 +5,7 @@ import { useAuth } from "../context/AuthContext";
 import { formatDate } from "../lib/format";
 import { SPORT_LABELS } from "../constants/sports";
 import { computeStreak } from "../lib/streak";
+import { loadDraft, draftHasContent } from "../lib/workoutDraft";
 import ContributionGraph from "../components/ContributionGraph";
 import type { Workout } from "../types/database";
 
@@ -24,6 +25,15 @@ export default function Dashboard() {
   const [workoutDates, setWorkoutDates] = useState<string[]>([]);
   const [streak, setStreak] = useState(computeStreak([]));
   const [loading, setLoading] = useState(true);
+  const [hasDraft, setHasDraft] = useState(false);
+
+  // Checked once on mount -- WorkoutForm is the only thing that writes this,
+  // and it re-checks itself when you navigate there, so this doesn't need
+  // to react to anything after the initial paint.
+  useEffect(() => {
+    const draft = loadDraft();
+    setHasDraft(!!draft && draftHasContent(draft));
+  }, []);
 
   useEffect(() => {
     if (!user) return;
@@ -82,6 +92,17 @@ export default function Dashboard() {
           <button type="button">+ Add exercise</button>
         </Link>
       </div>
+
+      {hasDraft && (
+        <Link to="/workouts/new" className="card-link" style={{ display: "block", marginBottom: 20 }}>
+          <div className="row between">
+            <span>
+              📝 <strong>Workout in progress</strong> — continue filling
+            </span>
+            <span className="muted">→</span>
+          </div>
+        </Link>
+      )}
 
       <div className="panel" style={{ marginBottom: 20 }}>
         <div className="row between" style={{ marginBottom: 12 }}>

@@ -2,12 +2,18 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
 import { useAuth } from "../context/AuthContext";
-import { formatDate, setVolume } from "../lib/format";
+import { formatDate, setVolume, type Equipment } from "../lib/format";
 import { saveWorkoutAsTemplate } from "../lib/templates";
 import { SPORT_LABELS, CLIMBING_DISCIPLINE_LABELS, type ClimbingDiscipline } from "../constants/sports";
-import type { Exercise, EnduranceDetails, Workout, WorkoutSet } from "../types/database";
+import { CARDIO_ACTIVITY_LABELS, CARDIO_PURPOSE_LABELS, type CardioActivity, type CardioPurpose } from "../constants/cardio";
+import type { Exercise, EnduranceDetails, Workout, WorkoutSet, CardioBlock } from "../types/database";
 
-type SetWithExercise = WorkoutSet & { exercise: Pick<Exercise, "id" | "name" | "is_bodyweight"> };
+type ExerciseEquipmentFields = Pick<Exercise, "id" | "name" | "is_bodyweight" | "is_dumbbell" | "bar_weight_kg">;
+type SetWithExercise = WorkoutSet & { exercise: ExerciseEquipmentFields };
+
+function equipmentOf(exercise: ExerciseEquipmentFields): Equipment {
+  return { isBodyweight: exercise.is_bodyweight, isDumbbell: exercise.is_dumbbell, barWeightKg: exercise.bar_weight_kg };
+}
 
 interface EditRow {
   weight: string;
@@ -19,6 +25,14 @@ function sportLabel(sport: string): string {
   return (SPORT_LABELS as Record<string, string>)[sport] ?? sport;
 }
 
+function cardioBlockDetails(c: CardioBlock): string {
+  const parts: string[] = [];
+  if (c.duration_minutes != null) parts.push(`${c.duration_minutes} min`);
+  if (c.speed_kmh != null) parts.push(`${c.speed_kmh} km/h`);
+  if (c.incline_percent != null) parts.push(`${c.incline_percent}% incline`);
+  return parts.join(" · ") || "No details logged";
+}
+
 export default function WorkoutDetail() {
   const { id } = useParams();
   const { user } = useAuth();
@@ -26,6 +40,7 @@ export default function WorkoutDetail() {
 
   const [workout, setWorkout] = useState<Workout | null>(null);
   const [sets, setSets] = useState<SetWithExercise[]>([]);
+  const [cardioBlocks, setCardioBlocks] = useState<CardioBlock[]>([]);
   const [endurance, setEndurance] = useState<EnduranceDetails | null>(null);
   const [bodyWeightKg, setBodyWeightKg] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
@@ -67,10 +82,16 @@ export default function WorkoutDetail() {
       } else {
         const { data: s } = await supabase
           .from("sets")
-          .select("*, exercise:exercises(id, name, is_bodyweight)")
+          .select("*, exercise:exercises(id, name, is_bodyweight, is_dumbbell, bar_weight_kg)")
           .eq("workout_id", workoutId)
           .order("set_order");
         setSets((s as unknown as SetWithExercise[]) ?? []);
+        const { data: cardio } = await supabase
+          .from("cardio_blocks")
+          .select("*")
+          .eq("workout_id", workoutId)
+          .order("block_order");
+        setCardioBlocks(cardio ?? []);
         const { data: bw } = await supabase
           .from("body_weight_logs")
           .select("weight_kg")
@@ -86,11 +107,11 @@ export default function WorkoutDetail() {
   }, [id]);
 
   const grouped = useMemo(() => {
-    const map = new Map<string, { name: string; isBodyweight: boolean; sets: SetWithExercise[] }>();
+    const map = new Map<string, { name: string; equipment: Equipment; sets: SetWithExercise[] }>();
     for (const s of sets) {
       const existing = map.get(s.exercise_id);
       if (existing) existing.sets.push(s);
-      else map.set(s.exercise_id, { name: s.exercise.name, isBodyweight: s.exercise.is_bodyweight, sets: [s] });
+      else map.set(s.exercise_id, { name: s.exercise.name, equipment: equipmentOf(s.exercise), sets: [s] });
     }
     return Array.from(map.values());
   }, [sets]);
@@ -101,7 +122,7 @@ export default function WorkoutDetail() {
         (sum, s) =>
           sum +
           setVolume({
-            isBodyweight: s.exercise.is_bodyweight,
+            equipment: equipmentOf(s.exercise),
             weight: s.weight,
             reps: s.reps,
             bodyWeightKg,
@@ -265,16 +286,53 @@ export default function WorkoutDetail() {
             </div>
           )}
 
+          {cardioBlocks.length > 0 && (
+            <div className="panel" style={{ marginTop: workout.warmup ? 12 : 0 }}>
+              <p className="eyebrow" style={{ marginBottom: 8 }}>
+                Cardio
+              </p>
+              <div className="stack" style={{ gap: 8 }}>
+                {cardioBlocks.map((c) => (
+                  <div key={c.id} className="row between">
+                    <span>
+                      {CARDIO_ACTIVITY_LABELS[c.activity as CardioActivity] ?? c.activity}{" "}
+                      <span className="muted">
+                        ({CARDIO_PURPOSE_LABELS[c.purpose as CardioPurpose] ?? c.purpose})
+                      </span>
+                    </span>
+                    <span className="muted">{cardioBlockDetails(c)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="stack" style={{ gap: 12, marginTop: 12 }}>
             {grouped.map((g) => (
               <div key={g.name} className="panel">
-                <h3>{g.name}</h3>
+                <div className="row between">
+                  <h3>{g.name}</h3>
+                  <div className="row" style={{ gap: 6 }}>
+                    {g.equipment.isDumbbell && <span className="chip focus">Dumbbell ×2</span>}
+                    {g.equipment.barWeightKg != null && (
+                      <span className="chip focus">Barbell +{g.equipment.barWeightKg} kg</span>
+                    )}
+                  </div>
+                </div>
                 <div className="table-scroll">
                   <table>
                     <thead>
                       <tr>
                         <th>#</th>
-                        <th>{g.isBodyweight ? "Added weight" : "Weight"}</th>
+                        <th>
+                          {g.equipment.isBodyweight
+                            ? "Added weight"
+                            : g.equipment.isDumbbell
+                              ? "Weight (per dumbbell)"
+                              : g.equipment.barWeightKg != null
+                                ? "Weight (added to bar)"
+                                : "Weight"}
+                        </th>
                         <th>Reps</th>
                         <th>Rest</th>
                         <th>Volume</th>
@@ -326,7 +384,7 @@ export default function WorkoutDetail() {
                               </>
                             )}
                             <td>
-                              {setVolume({ isBodyweight: g.isBodyweight, weight, reps, bodyWeightKg }).toFixed(0)}
+                              {setVolume({ equipment: g.equipment, weight, reps, bodyWeightKg }).toFixed(0)}
                             </td>
                             {editingSets && (
                               <td>
