@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { useConnections } from "../hooks/useConnections";
 import ConnectionActions from "../components/ConnectionActions";
 import { relativeTime } from "../lib/format";
@@ -57,7 +58,13 @@ export default function Connections() {
               <tbody>
                 {sortedRows.map((row) => (
                   <tr key={row.profile.id}>
-                    <td>{row.profile.name}</td>
+                    <td>
+                      {row.status === "accepted" ? (
+                        <Link to={`/profile/${row.profile.id}`}>{row.profile.name}</Link>
+                      ) : (
+                        row.profile.name
+                      )}
+                    </td>
                     <td className="muted">{relativeTime(row.profile.last_seen)}</td>
                     <td>
                       <ConnectionActions

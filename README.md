@@ -62,8 +62,9 @@ Use this link to start logging: [https://matteorobbiati.github.io/traintracker/l
 | `/` | Dashboard — recent workouts, latest body weight, quick actions |
 | `/exercises`, `/exercises/new`, `/exercises/:id`, `/exercises/:id/edit` | Shared exercise library |
 | `/workouts`, `/workouts/new`, `/workouts/:id`, `/workouts/:id/edit` | Personal workout log + history |
-| `/group` | Recharts: weekly volume, workout frequency, muscle distribution, per-exercise comparison, group records |
-| `/profile` | Body weight log; links to `/connections` |
+| `/group` | Highlights, combined activity calendar, weekly volume, workout frequency, muscle heat, per-exercise comparison |
+| `/profile` | Own activity calendar, appearance settings, body weight log + trend |
+| `/profile/:userId` | Read-only: a connection's name + activity calendar, in *their* accent color |
 | `/connections` | Group member list, "last seen", and connection requests (was folded into Profile, split out for room to grow) |
 
 An exercise has one **equipment** kind, picked in ExerciseForm and mutually
@@ -144,9 +145,7 @@ workout doesn't touch this at all — that's already backed by the database,
 there's nothing to lose.
 
 Personal bests come in two independent flavors (`src/lib/personalBest.ts`),
-both shown per exercise on its detail page (your own data) and as two
-separate **Group records** tables on the Group page (best among everyone
-whose data you can see, i.e. self + accepted connections):
+both shown per exercise on its detail page:
 - **Massimale** (`isBetterSet`) — the heaviest weight logged for a loaded
   exercise, or the most reps for a bodyweight one (added weight as
   tiebreaker either way). One best *set*.
@@ -156,11 +155,22 @@ whose data you can see, i.e. self + accepted connections):
   tracked as its own record instead of being invisible next to the
   massimale.
 
+Group used to also show these as two big "Group records" tables (best
+among everyone whose data you can see) — removed for being the single
+most-crowded thing on the page; the "💪 Latest PB" highlight card covers
+the at-a-glance case, and ExerciseDetail still has the full detail
+per-exercise.
+
 The Group page opens with a **Highlights** panel (most active this week,
 longest current streak in the group, combined volume this week, most recent
-new massimale) before the detailed charts/tables below — meant to answer
-"what's been going on" at a glance instead of making everyone read every
-chart to find out.
+new massimale) followed by a combined **activity calendar** (everyone's
+workouts summed into one `ContributionGraph`, in the viewer's own accent —
+it's a group aggregate, not any one person's), then the detailed
+charts/tables below — meant to answer "what's been going on" at a glance
+instead of making everyone read every chart to find out. The per-person
+"Body weight over time" comparison chart that used to live here was
+dropped too (declutter, same reasoning) — that's now Profile's job, see
+below.
 
 Group's muscle heat map splits an exercise's volume across its
 `primary_muscles` **and** `secondary_muscles` (secondary at half weight) —
@@ -208,6 +218,19 @@ fails). Before this, an accent picked in a private-browsing window or on a
 different device simply didn't carry over — that was `localStorage` working
 as designed, just not what "save my color" implied once there's an account
 already synced across everything else.
+
+Profile also carries its own **activity calendar** (same `ContributionGraph`
+as Dashboard, own workout dates) above Appearance, and a small weight-trend
+`Recharts` line above the existing body-weight table once there are at
+least two entries. `/profile/:userId` renders the read-only counterpart for
+a connection: their name and *their* activity calendar in *their* chosen
+accent (`src/lib/theme.ts accentColors()`, `ContributionGraph`'s
+`colorOverride` prop writes `--ember`/`--ember-muted` inline for just that
+instance rather than touching the page's own theme) — nothing else from
+their Profile (appearance settings, weight log) is shown, and RLS still
+gates the actual workout dates on connection status, so an unconnected
+profile just reads as "no activity to show" rather than an error.
+Connections links each accepted row's name to this route.
 
 From the "Log a workout" form, the current fields can be saved as a named
 **template** (`workout_templates` + `template_sets`, mirroring

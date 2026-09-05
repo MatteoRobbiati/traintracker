@@ -18,6 +18,7 @@ import { formatDate, setVolume, type Equipment } from "../lib/format";
 import { isBetterSet, type BestSetCandidate } from "../lib/personalBest";
 import { computeStreak } from "../lib/streak";
 import MuscleMap from "../components/MuscleMap";
+import ContributionGraph from "../components/ContributionGraph";
 import type { Muscle } from "../constants/muscles";
 
 // Categorical palette — distinguishable in both light and dark, consistent
@@ -62,6 +63,11 @@ export default function Group() {
   const [profileNames, setProfileNames] = useState<Record<string, string>>({});
   const [rows, setRows] = useState<SetRow[]>([]);
   const [weightLogs, setWeightLogs] = useState<WeightLog[]>([]);
+  // Every visible workout's date, of *any* type (strength or endurance) --
+  // unlike `rows` (from `sets`, strength-only), this is what feeds the
+  // combined group activity calendar, so someone who only logs cardio still
+  // shows up in it.
+  const [allWorkoutDates, setAllWorkoutDates] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedExercise, setSelectedExercise] = useState<string>("");
   const [muscleUserFilter, setMuscleUserFilter] = useState<string>("");
@@ -69,7 +75,7 @@ export default function Group() {
 
   useEffect(() => {
     async function load() {
-      const [{ data: profs }, { data: sets }, { data: weights }] = await Promise.all([
+      const [{ data: profs }, { data: sets }, { data: weights }, { data: workouts }] = await Promise.all([
         supabase.from("profiles").select("id, name"),
         supabase
           .from("sets")
@@ -80,6 +86,7 @@ export default function Group() {
           .from("body_weight_logs")
           .select("user_id, weight_kg, recorded_at")
           .order("recorded_at", { ascending: false }),
+        supabase.from("workouts").select("date"),
       ]);
 
       const profMap: Record<string, string> = {};
@@ -88,6 +95,7 @@ export default function Group() {
 
       setRows((sets as unknown as SetRow[]) ?? []);
       setWeightLogs(weights ?? []);
+      setAllWorkoutDates((workouts ?? []).map((w) => w.date));
       setLoading(false);
     }
     load();
@@ -167,21 +175,6 @@ export default function Group() {
     return Array.from(seen.entries()).map(([name, dates]) => ({ name, workouts: dates.size }));
   }, [enriched]);
 
-  // Body weight over time, one line per visible person
-  const weightSeries = useMemo(() => {
-    const byDate = new Map<string, Record<string, number>>();
-    for (const w of weightLogs) {
-      const name = profileNames[w.user_id] ?? "Unknown";
-      const date = w.recorded_at.slice(0, 10);
-      const entry = byDate.get(date) ?? {};
-      entry[name] = w.weight_kg;
-      byDate.set(date, entry);
-    }
-    return Array.from(byDate.entries())
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([date, values]) => ({ date, ...values }));
-  }, [weightLogs, profileNames]);
-
   // Muscle heat: volume split across an exercise's primary AND secondary
   // muscles (secondary at half weight -- a stabilizer/assistant shouldn't
   // read as heavily trained as the actual target), normalized 0..1 against
@@ -255,35 +248,6 @@ export default function Group() {
       .sort((a, b) => a.exerciseName.localeCompare(b.exerciseName));
   }, [enriched]);
 
-  // Group volume records: best single-session total per exercise -- a
-  // separate kind of record from "massimale" above (see
-  // src/lib/personalBest.ts), so a many-lighter-sets session can hold its
-  // own record instead of being invisible next to the heaviest single set.
-  const groupVolumeRecords = useMemo(() => {
-    const byExercise = new Map<string, { workoutId: string; date: string; volume: number; holder: string }[]>();
-    for (const r of enriched) {
-      const list = byExercise.get(r.exerciseName) ?? [];
-      list.push({ workoutId: r.workoutId, date: r.date, volume: r.volume, holder: r.userName });
-      byExercise.set(r.exerciseName, list);
-    }
-    const result: { exerciseName: string; volume: number; holder: string; date: string }[] = [];
-    for (const [exerciseName, sets] of byExercise) {
-      const bySession = new Map<string, { volume: number; date: string; holder: string }>();
-      for (const s of sets) {
-        const key = `${s.holder}|${s.workoutId}`;
-        const entry = bySession.get(key);
-        if (entry) entry.volume += s.volume;
-        else bySession.set(key, { volume: s.volume, date: s.date, holder: s.holder });
-      }
-      let best: { volume: number; date: string; holder: string } | null = null;
-      for (const v of bySession.values()) {
-        if (!best || v.volume > best.volume) best = v;
-      }
-      if (best) result.push({ exerciseName, ...best });
-    }
-    return result.sort((a, b) => a.exerciseName.localeCompare(b.exerciseName));
-  }, [enriched]);
-
   // Group highlights: a handful of at-a-glance cards summarizing "what's
   // going on" instead of making everyone read every chart below to find out.
   const highlights = useMemo(() => {
@@ -333,11 +297,11 @@ export default function Group() {
   }, [enriched, groupRecords]);
 
   if (loading) return <p className="muted">Loading…</p>;
-  if (enriched.length === 0 && weightLogs.length === 0)
+  if (enriched.length === 0 && weightLogs.length === 0 && allWorkoutDates.length === 0)
     return (
       <p className="muted">
         Nothing to compare yet — either no workouts/weight logged, or you're not connected with anyone. Head
-        to <Link to="/profile">Profile</Link> to request access to a friend's data.
+        to <Link to="/connections">Connections</Link> to request access to a friend's data.
       </p>
     );
 
@@ -345,7 +309,7 @@ export default function Group() {
     <div className="stack" style={{ gap: 16 }}>
       <h1>Group</h1>
 
-      {enriched.length > 0 && (
+      {(enriched.length > 0 || allWorkoutDates.length > 0) && (
         <div className="panel">
           <h3 style={{ marginBottom: 12 }}>✨ Highlights</h3>
           <div className="highlight-grid">
@@ -386,6 +350,14 @@ export default function Group() {
               </div>
             )}
           </div>
+          {allWorkoutDates.length > 0 && (
+            <div style={{ marginTop: 18 }}>
+              <p className="eyebrow" style={{ margin: "0 0 8px" }}>
+                Group activity — everyone's workouts, combined
+              </p>
+              <ContributionGraph dates={allWorkoutDates} />
+            </div>
+          )}
         </div>
       )}
 
@@ -432,32 +404,6 @@ export default function Group() {
             </ResponsiveContainer>
           </div>
         </>
-      )}
-
-      {weightLogs.length > 0 && (
-        <div className="panel">
-          <h3>Body weight over time</h3>
-          <ResponsiveContainer width="100%" height={260}>
-            <LineChart data={weightSeries}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" />
-              <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="var(--ink-soft)" />
-              <YAxis tick={{ fontSize: 11 }} stroke="var(--ink-soft)" domain={["auto", "auto"]} unit="kg" />
-              <Tooltip contentStyle={{ background: "var(--paper-raised)", border: "1px solid var(--line)" }} />
-              <Legend />
-              {userNames.map((name, i) => (
-                <Line
-                  key={name}
-                  type="monotone"
-                  dataKey={name}
-                  stroke={PALETTE[i % PALETTE.length]}
-                  strokeWidth={2}
-                  dot={{ r: 3 }}
-                  connectNulls
-                />
-              ))}
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
       )}
 
       <div className="panel">
@@ -548,72 +494,6 @@ export default function Group() {
         </div>
       )}
 
-      {groupRecords.length > 0 && (
-        <div className="panel">
-          <h3>Group records — massimale</h3>
-          <p className="muted" style={{ marginTop: -6, marginBottom: 12 }}>
-            Best single set ever logged, per exercise, among everyone whose data you can see.
-          </p>
-          <div className="table-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>Exercise</th>
-                  <th>Best</th>
-                  <th>Held by</th>
-                  <th>Date</th>
-                </tr>
-              </thead>
-              <tbody>
-                {groupRecords.map((r) => (
-                  <tr key={r.exerciseName}>
-                    <td>{r.exerciseName}</td>
-                    <td>
-                      {r.isBodyweight
-                        ? `${r.best.reps} reps${r.best.weight ? ` (${r.best.weight > 0 ? "+" : ""}${r.best.weight} kg)` : ""}`
-                        : `${r.best.weight} kg × ${r.best.reps}`}
-                    </td>
-                    <td>{r.holder}</td>
-                    <td className="muted">{formatDate(r.best.date)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {groupVolumeRecords.length > 0 && (
-        <div className="panel">
-          <h3>Group records — best session volume</h3>
-          <p className="muted" style={{ marginTop: -6, marginBottom: 12 }}>
-            Highest total volume for that exercise in a single session — different from "massimale" above: a
-            session of many lighter sets can out-volume one heavy single.
-          </p>
-          <div className="table-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>Exercise</th>
-                  <th>Best volume</th>
-                  <th>Held by</th>
-                  <th>Date</th>
-                </tr>
-              </thead>
-              <tbody>
-                {groupVolumeRecords.map((r) => (
-                  <tr key={r.exerciseName}>
-                    <td>{r.exerciseName}</td>
-                    <td>{r.volume.toFixed(0)} kg</td>
-                    <td>{r.holder}</td>
-                    <td className="muted">{formatDate(r.date)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

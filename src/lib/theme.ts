@@ -106,6 +106,17 @@ export function resolveIsDark(mode: ThemeMode): boolean {
   return window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false;
 }
 
+/**
+ * The ember/ember-muted pair for a *specific* accent, independent of the
+ * current viewer's own theme -- for rendering something in someone else's
+ * chosen color (e.g. a connection's activity calendar on their profile)
+ * without touching the page's actual --ember CSS variables.
+ */
+export function accentColors(accent: AccentId, isDark: boolean): { ember: string; emberMuted: string } {
+  const palette = ACCENT_PALETTES[accent][isDark ? "dark" : "light"];
+  return { ember: palette.ember, emberMuted: palette.emberMuted };
+}
+
 export function applyTheme(mode: ThemeMode, accent: AccentId): void {
   const root = document.documentElement;
   if (mode === "system") root.removeAttribute("data-theme");
