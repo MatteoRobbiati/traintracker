@@ -103,10 +103,20 @@ create table public.workouts (
   warmup            text,               -- free-text warmup summary
   duration_minutes  integer check (duration_minutes >= 0),
   workout_type      text not null default 'strength' check (workout_type in ('strength', 'endurance')),
-  created_at        timestamptz not null default now()
+  created_at        timestamptz not null default now(),
+
+  -- Training partners (see "Training with" in WorkoutForm): logging a
+  -- workout can also create a copy of it for one or more connected friends
+  -- you trained with. logged_by_id records who actually submitted the row
+  -- (the friend who logged it for you, if not yourself); session_group_id
+  -- ties together every workout created in that one submit so they can be
+  -- found and cross-linked. Both are null for an ordinary solo workout.
+  logged_by_id      uuid references public.profiles(id) on delete set null default auth.uid(),
+  session_group_id  uuid
 );
 
 create index workouts_user_date_idx on public.workouts (user_id, date desc);
+create index workouts_session_group_idx on public.workouts (session_group_id) where session_group_id is not null;
 
 -- ============================================================================
 -- sets — one row per working set within a strength workout.
@@ -338,24 +348,33 @@ create policy "exercises_update_own" on public.exercises
 create policy "exercises_delete_own" on public.exercises
   for delete to authenticated using (created_by = auth.uid());
 
--- workouts — gated by connection
+-- workouts — gated by connection. Insert also allows logging a workout for
+-- a connected training partner (see the migration 008 comment above
+-- logged_by_id/session_group_id) -- the row must record the real inserting
+-- user as logged_by_id, and that user must be connected to whoever it's for.
 create policy "workouts_select_own_or_connected" on public.workouts
   for select to authenticated using (public.is_connected(user_id));
-create policy "workouts_insert_own" on public.workouts
-  for insert to authenticated with check (user_id = auth.uid());
+create policy "workouts_insert_own_or_for_connected" on public.workouts
+  for insert to authenticated with check (
+    logged_by_id = auth.uid() and public.is_connected(user_id)
+  );
 create policy "workouts_update_own" on public.workouts
   for update to authenticated using (user_id = auth.uid());
 create policy "workouts_delete_own" on public.workouts
   for delete to authenticated using (user_id = auth.uid());
 
--- sets (ownership/visibility follows the parent workout)
+-- sets (ownership/visibility follows the parent workout; insert also allowed
+-- by whoever logged the workout on a training partner's behalf)
 create policy "sets_select_own_or_connected" on public.sets
   for select to authenticated using (
     exists (select 1 from public.workouts w where w.id = workout_id and public.is_connected(w.user_id))
   );
-create policy "sets_insert_own" on public.sets
+create policy "sets_insert_own_or_for_connected" on public.sets
   for insert to authenticated with check (
-    exists (select 1 from public.workouts w where w.id = workout_id and w.user_id = auth.uid())
+    exists (
+      select 1 from public.workouts w
+      where w.id = workout_id and (w.user_id = auth.uid() or w.logged_by_id = auth.uid())
+    )
   );
 create policy "sets_update_own" on public.sets
   for update to authenticated using (
@@ -371,9 +390,12 @@ create policy "endurance_select_own_or_connected" on public.endurance_details
   for select to authenticated using (
     exists (select 1 from public.workouts w where w.id = workout_id and public.is_connected(w.user_id))
   );
-create policy "endurance_insert_own" on public.endurance_details
+create policy "endurance_insert_own_or_for_connected" on public.endurance_details
   for insert to authenticated with check (
-    exists (select 1 from public.workouts w where w.id = workout_id and w.user_id = auth.uid())
+    exists (
+      select 1 from public.workouts w
+      where w.id = workout_id and (w.user_id = auth.uid() or w.logged_by_id = auth.uid())
+    )
   );
 create policy "endurance_update_own" on public.endurance_details
   for update to authenticated using (
@@ -389,9 +411,12 @@ create policy "cardio_blocks_select_own_or_connected" on public.cardio_blocks
   for select to authenticated using (
     exists (select 1 from public.workouts w where w.id = workout_id and public.is_connected(w.user_id))
   );
-create policy "cardio_blocks_insert_own" on public.cardio_blocks
+create policy "cardio_blocks_insert_own_or_for_connected" on public.cardio_blocks
   for insert to authenticated with check (
-    exists (select 1 from public.workouts w where w.id = workout_id and w.user_id = auth.uid())
+    exists (
+      select 1 from public.workouts w
+      where w.id = workout_id and (w.user_id = auth.uid() or w.logged_by_id = auth.uid())
+    )
   );
 create policy "cardio_blocks_update_own" on public.cardio_blocks
   for update to authenticated using (

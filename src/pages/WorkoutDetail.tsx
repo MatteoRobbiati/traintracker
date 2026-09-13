@@ -46,6 +46,12 @@ export default function WorkoutDetail() {
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
 
+  // Training partners (see "Training with" in WorkoutForm): who logged this
+  // workout for you, if not yourself, and who else's copy came out of the
+  // same submit.
+  const [loggedByName, setLoggedByName] = useState<string | null>(null);
+  const [sessionPartners, setSessionPartners] = useState<{ workoutId: string; name: string }[]>([]);
+
   // Inline "click a value, change it" editing of the logged sets, without
   // leaving this page for the full /edit form (that form is still there for
   // structural changes -- adding/removing whole exercises).
@@ -101,6 +107,25 @@ export default function WorkoutDetail() {
           .maybeSingle();
         setBodyWeightKg(bw?.weight_kg ?? null);
       }
+
+      if (w.logged_by_id && w.logged_by_id !== w.user_id) {
+        const { data: logger } = await supabase.from("profiles").select("name").eq("id", w.logged_by_id).maybeSingle();
+        setLoggedByName(logger?.name ?? null);
+      }
+      if (w.session_group_id) {
+        const { data: siblings } = await supabase
+          .from("workouts")
+          .select("id, profile:profiles(name)")
+          .eq("session_group_id", w.session_group_id)
+          .neq("id", w.id);
+        setSessionPartners(
+          ((siblings as unknown as { id: string; profile: { name: string } | null }[]) ?? []).map((s) => ({
+            workoutId: s.id,
+            name: s.profile?.name ?? "?",
+          }))
+        );
+      }
+
       setLoading(false);
     }
     load();
@@ -254,6 +279,23 @@ export default function WorkoutDetail() {
           {!isEndurance && <span className="chip focus">{totalVolume.toFixed(0)} kg total volume</span>}
         </div>
       </div>
+
+      {(loggedByName || sessionPartners.length > 0) && (
+        <p className="muted" style={{ fontSize: 13, marginTop: -8 }}>
+          {loggedByName && <>📋 Logged by {loggedByName} while training together. </>}
+          {sessionPartners.length > 0 && (
+            <>
+              Trained with:{" "}
+              {sessionPartners.map((p, i) => (
+                <span key={p.workoutId}>
+                  {i > 0 && ", "}
+                  <Link to={`/workouts/${p.workoutId}`}>{p.name}</Link>
+                </span>
+              ))}
+            </>
+          )}
+        </p>
+      )}
 
       {isEndurance ? (
         <div className="panel">
