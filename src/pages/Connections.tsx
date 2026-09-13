@@ -1,5 +1,6 @@
 import { useConnections } from "../hooks/useConnections";
 import ConnectionActions from "../components/ConnectionActions";
+import { useAuth } from "../context/AuthContext";
 import { relativeTime } from "../lib/format";
 
 const STATUS_PRIORITY = {
@@ -21,6 +22,7 @@ export default function Connections() {
     removeConnection,
     requestAgain,
   } = useConnections();
+  const { onlineUsers } = useAuth();
 
   const sortedRows = [...rows].sort((a, b) => STATUS_PRIORITY[a.status] - STATUS_PRIORITY[b.status]);
   const incomingCount = rows.filter((r) => r.status === "incoming_pending").length;
@@ -55,10 +57,25 @@ export default function Connections() {
                 </tr>
               </thead>
               <tbody>
-                {sortedRows.map((row) => (
+                {sortedRows.map((row) => {
+                  const online = row.profile.id in onlineUsers;
+                  return (
                   <tr key={row.profile.id}>
-                    <td>{row.profile.name}</td>
-                    <td className="muted">{relativeTime(row.profile.last_seen)}</td>
+                    <td>
+                      <span
+                        title={online ? "Online now" : undefined}
+                        style={{
+                          display: "inline-block",
+                          width: 8,
+                          height: 8,
+                          borderRadius: "50%",
+                          marginRight: 8,
+                          background: online ? "var(--focus)" : "var(--stone)",
+                        }}
+                      />
+                      {row.profile.name}
+                    </td>
+                    <td className="muted">{online ? "Online now" : relativeTime(row.profile.last_seen)}</td>
                     <td>
                       <ConnectionActions
                         row={row}
@@ -71,7 +88,8 @@ export default function Connections() {
                       />
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

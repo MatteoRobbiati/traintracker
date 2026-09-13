@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
+import { formatDate } from "../lib/format";
 
 const DAY_MS = 86400000;
 const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -12,9 +14,16 @@ interface Cell {
   count: number; // -1 = not-yet-happened, render as a blank placeholder
 }
 
+export interface ContributionWorkout {
+  id: string;
+  /** "YYYY-MM-DD". */
+  date: string;
+  /** What to show for this workout in the clicked-day list, e.g. "Strength" or "Running". */
+  label: string;
+}
+
 interface ContributionGraphProps {
-  /** "YYYY-MM-DD" workout dates, duplicates allowed (multiple workouts same day). */
-  dates: string[];
+  workouts: ContributionWorkout[];
   /** How many weeks of history to show. GitHub shows ~52; that's the point. */
   weeks?: number;
 }
@@ -24,18 +33,25 @@ interface ContributionGraphProps {
 // to streak logic (see src/lib/streak.ts) -- this is just a visual density
 // map, so a rest day shows as an empty square without implying anything
 // broke, which is the whole point of not being Duolingo about it.
-export default function ContributionGraph({ dates, weeks = 52 }: ContributionGraphProps) {
+export default function ContributionGraph({ workouts, weeks = 52 }: ContributionGraphProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  // dayNum of the clicked cell, so tapping it again (or the ✕) closes it --
+  // a fixed panel under the grid rather than a floating tooltip, which is
+  // the only thing that works reliably at phone width without spilling
+  // past the panel's edge.
+  const [selectedDay, setSelectedDay] = useState<number | null>(null);
 
-  const counts = useMemo(() => {
-    const map = new Map<number, number>();
-    for (const dateStr of dates) {
-      const [y, m, d] = dateStr.split("-").map(Number);
+  const byDate = useMemo(() => {
+    const map = new Map<number, ContributionWorkout[]>();
+    for (const w of workouts) {
+      const [y, m, d] = w.date.split("-").map(Number);
       const dn = dayNumber(y, m - 1, d);
-      map.set(dn, (map.get(dn) ?? 0) + 1);
+      const list = map.get(dn) ?? [];
+      list.push(w);
+      map.set(dn, list);
     }
     return map;
-  }, [dates]);
+  }, [workouts]);
 
   const columns = useMemo(() => {
     const now = new Date();
@@ -51,12 +67,12 @@ export default function ContributionGraph({ dates, weeks = 52 }: ContributionGra
       const col: Cell[] = [];
       for (let d = 0; d < 7; d++) {
         const dn = startDn + w * 7 + d;
-        col.push({ dayNum: dn, count: dn > todayDn ? -1 : counts.get(dn) ?? 0 });
+        col.push({ dayNum: dn, count: dn > todayDn ? -1 : byDate.get(dn)?.length ?? 0 });
       }
       cols.push(col);
     }
     return cols;
-  }, [counts, weeks]);
+  }, [byDate, weeks]);
 
   // Start scrolled all the way to the right (today) instead of the oldest
   // week -- on a phone-width screen almost none of the 52 weeks fit, and the
@@ -71,6 +87,12 @@ export default function ContributionGraph({ dates, weeks = 52 }: ContributionGra
     if (count === 2) return "cg-l2";
     return "cg-l3";
   }
+
+  function toggleDay(dayNum: number) {
+    setSelectedDay((d) => (d === dayNum ? null : dayNum));
+  }
+
+  const selectedWorkouts = selectedDay != null ? byDate.get(selectedDay) ?? [] : [];
 
   return (
     <div>
@@ -89,8 +111,17 @@ export default function ContributionGraph({ dates, weeks = 52 }: ContributionGra
                   ) : (
                     <div
                       key={j}
-                      className={`cg-cell ${levelClass(cell.count)}`}
+                      role="button"
+                      tabIndex={0}
+                      className={`cg-cell ${levelClass(cell.count)} ${selectedDay === cell.dayNum ? "cg-selected" : ""}`}
                       title={`${new Date(cell.dayNum * DAY_MS).toISOString().slice(0, 10)}: ${cell.count} workout${cell.count === 1 ? "" : "s"}`}
+                      onClick={() => toggleDay(cell.dayNum)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          toggleDay(cell.dayNum);
+                        }
+                      }}
                     />
                   )
                 )}
@@ -107,6 +138,30 @@ export default function ContributionGraph({ dates, weeks = 52 }: ContributionGra
         <span className="cg-cell cg-l3" />
         <span>More</span>
       </div>
+
+      {selectedDay != null && (
+        <div className="cg-day-detail">
+          <div className="row between">
+            <strong>{formatDate(new Date(selectedDay * DAY_MS).toISOString().slice(0, 10))}</strong>
+            <button type="button" className="ghost" onClick={() => setSelectedDay(null)}>
+              ✕
+            </button>
+          </div>
+          {selectedWorkouts.length === 0 ? (
+            <p className="muted" style={{ margin: "6px 0 0", fontSize: 13 }}>
+              No workouts logged.
+            </p>
+          ) : (
+            <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+              {selectedWorkouts.map((w) => (
+                <li key={w.id}>
+                  <Link to={`/workouts/${w.id}`}>{w.label}</Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
     </div>
   );
 }

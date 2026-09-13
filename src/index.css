@@ -294,16 +294,25 @@ table td input, table td select { padding: 6px 8px; min-width: 0; }
   color: var(--ink-soft);
   white-space: nowrap;
 }
-.cg-cell { width: 11px; height: 11px; border-radius: 3px; background: var(--stone); flex: none; }
-.cg-cell.cg-empty { background: transparent; }
+.cg-cell { width: 11px; height: 11px; border-radius: 3px; background: var(--stone); flex: none; cursor: pointer; }
+.cg-cell.cg-empty { background: transparent; cursor: default; }
 /* Mixed against --stone (the neutral base of an empty cell) rather than
    --ember-muted's pastel tint, so even the lightest "trained" level reads as
    a clearly saturated step up from empty, not a wash. */
 .cg-cell.cg-l1 { background: color-mix(in srgb, var(--ember) 45%, var(--stone)); }
 .cg-cell.cg-l2 { background: color-mix(in srgb, var(--ember) 75%, var(--stone)); }
 .cg-cell.cg-l3 { background: var(--ember); }
+.cg-cell.cg-selected { outline: 2px solid var(--focus); outline-offset: 1px; }
 .cg-legend { display: flex; align-items: center; gap: 4px; margin-top: 8px; font-size: 11px; color: var(--ink-soft); }
-.cg-legend .cg-cell { width: 10px; height: 10px; }
+.cg-legend .cg-cell { width: 10px; height: 10px; cursor: default; }
+
+.cg-day-detail {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
 
 /* Nav */
 .top-nav {
@@ -463,6 +472,15 @@ button.linklike { background: none; border: none; cursor: pointer; }
   flex-direction: column;
   gap: 10px;
   padding: 12px 14px;
+}
+.chat-date-divider {
+  align-self: center;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+  margin: 4px 0;
 }
 
 @media (max-width: 720px) {
