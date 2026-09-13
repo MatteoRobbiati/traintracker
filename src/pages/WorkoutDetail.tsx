@@ -8,11 +8,19 @@ import { SPORT_LABELS, CLIMBING_DISCIPLINE_LABELS, type ClimbingDiscipline } fro
 import { CARDIO_ACTIVITY_LABELS, CARDIO_PURPOSE_LABELS, type CardioActivity, type CardioPurpose } from "../constants/cardio";
 import type { Exercise, EnduranceDetails, Workout, WorkoutSet, CardioBlock } from "../types/database";
 
-type ExerciseEquipmentFields = Pick<Exercise, "id" | "name" | "is_bodyweight" | "is_dumbbell" | "bar_weight_kg">;
+type ExerciseEquipmentFields = Pick<
+  Exercise,
+  "id" | "name" | "is_bodyweight" | "bodyweight_percent" | "is_dumbbell" | "bar_weight_kg"
+>;
 type SetWithExercise = WorkoutSet & { exercise: ExerciseEquipmentFields };
 
 function equipmentOf(exercise: ExerciseEquipmentFields): Equipment {
-  return { isBodyweight: exercise.is_bodyweight, isDumbbell: exercise.is_dumbbell, barWeightKg: exercise.bar_weight_kg };
+  return {
+    isBodyweight: exercise.is_bodyweight,
+    bodyweightPercent: exercise.bodyweight_percent,
+    isDumbbell: exercise.is_dumbbell,
+    barWeightKg: exercise.bar_weight_kg,
+  };
 }
 
 interface EditRow {
@@ -88,7 +96,7 @@ export default function WorkoutDetail() {
       } else {
         const { data: s } = await supabase
           .from("sets")
-          .select("*, exercise:exercises(id, name, is_bodyweight, is_dumbbell, bar_weight_kg)")
+          .select("*, exercise:exercises(id, name, is_bodyweight, bodyweight_percent, is_dumbbell, bar_weight_kg)")
           .eq("workout_id", workoutId)
           .order("set_order");
         setSets((s as unknown as SetWithExercise[]) ?? []);

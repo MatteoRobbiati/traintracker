@@ -106,7 +106,11 @@ export default function Exercises() {
             <div className="row between">
               <strong>{ex.name}</strong>
               <div className="row" style={{ gap: 6 }}>
-                {ex.is_bodyweight && <span className="chip focus">Bodyweight</span>}
+                {ex.is_bodyweight && (
+                  <span className="chip focus">
+                    Bodyweight{ex.bodyweight_percent !== 100 ? ` ${ex.bodyweight_percent}%` : ""}
+                  </span>
+                )}
                 {ex.is_dumbbell && <span className="chip focus">Dumbbell</span>}
                 {ex.bar_weight_kg != null && <span className="chip focus">Barbell</span>}
               </div>

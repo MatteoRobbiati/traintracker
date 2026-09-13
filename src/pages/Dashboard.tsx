@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useOutletContext } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
 import { useAuth } from "../context/AuthContext";
-import { formatDate } from "../lib/format";
+import { formatDate, relativeTime } from "../lib/format";
 import { SPORT_LABELS } from "../constants/sports";
+import { NEWS_ROOM } from "../constants/rooms";
 import { computeStreak } from "../lib/streak";
 import { loadDraft, draftHasContent } from "../lib/workoutDraft";
 import ContributionGraph from "../components/ContributionGraph";
+import type { AppOutletContext } from "../App";
 import type { Workout } from "../types/database";
 
 function sportLabel(sport: string): string {
@@ -17,8 +19,23 @@ interface RecentWorkout extends Workout {
   sport: string | null;
 }
 
+interface NewsMessage {
+  id: string;
+  body: string;
+  created_at: string;
+  senderName: string;
+}
+
+// Which "what's new" post someone has already dismissed, per browser --
+// dismissing doesn't need to be tracked server-side or sync across devices,
+// it's just "don't show me this exact one again here".
+const NEWS_SEEN_KEY = "traintrack:lastSeenNewsMessageId";
+
 export default function Dashboard() {
   const { profile, user } = useAuth();
+  const { openChat } = useOutletContext<AppOutletContext>();
+  const [latestNews, setLatestNews] = useState<NewsMessage | null>(null);
+  const [newsDismissed, setNewsDismissed] = useState(true);
   const [recentWorkouts, setRecentWorkouts] = useState<RecentWorkout[]>([]);
   const [latestWeight, setLatestWeight] = useState<number | null>(null);
   const [workoutCount, setWorkoutCount] = useState<number | null>(null);
@@ -38,6 +55,37 @@ export default function Dashboard() {
     const draft = loadDraft();
     setHasDraft(!!draft && draftHasContent(draft));
   }, []);
+
+  // "What's new" banner: whatever was most recently posted in the News chat
+  // room (see constants/rooms.ts NEWS_ROOM) -- post an update there after
+  // shipping a feature/fix and it shows up here automatically. Dismissing
+  // just remembers that one message's id locally, so a genuinely new post
+  // still reopens the banner.
+  useEffect(() => {
+    supabase
+      .from("messages")
+      .select("id, body, created_at, sender:profiles(name)")
+      .eq("room", NEWS_ROOM)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (!data) return;
+        const news: NewsMessage = {
+          id: data.id,
+          body: data.body,
+          created_at: data.created_at,
+          senderName: (data as any).sender?.name ?? "Someone",
+        };
+        setLatestNews(news);
+        setNewsDismissed(localStorage.getItem(NEWS_SEEN_KEY) === news.id);
+      });
+  }, []);
+
+  function dismissNews() {
+    if (latestNews) localStorage.setItem(NEWS_SEEN_KEY, latestNews.id);
+    setNewsDismissed(true);
+  }
 
   useEffect(() => {
     if (!user) return;
@@ -116,6 +164,35 @@ export default function Dashboard() {
           <button type="button">+ Add exercise</button>
         </Link>
       </div>
+
+      {latestNews && !newsDismissed && (
+        <div className="panel" style={{ marginBottom: 20, borderColor: "var(--focus)" }}>
+          <div className="row between" style={{ alignItems: "flex-start" }}>
+            <div>
+              <p className="eyebrow" style={{ margin: "0 0 4px" }}>📣 What's new</p>
+              <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{latestNews.body}</p>
+              <p className="muted" style={{ fontSize: 12, margin: "4px 0 0" }}>
+                {latestNews.senderName} · {relativeTime(latestNews.created_at)}
+              </p>
+            </div>
+            <div className="row" style={{ gap: 6, flexShrink: 0 }}>
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => {
+                  dismissNews();
+                  openChat(NEWS_ROOM);
+                }}
+              >
+                See all
+              </button>
+              <button type="button" className="ghost" onClick={dismissNews} aria-label="Dismiss">
+                ✕
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {hasDraft && (
         <Link to="/workouts/new" className="card-link" style={{ display: "block", marginBottom: 20 }}>

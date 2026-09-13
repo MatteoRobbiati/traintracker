@@ -9,7 +9,12 @@ import { MUSCLE_LABELS } from "../constants/muscles";
 import type { Exercise } from "../types/database";
 
 function equipmentOf(exercise: Exercise): Equipment {
-  return { isBodyweight: exercise.is_bodyweight, isDumbbell: exercise.is_dumbbell, barWeightKg: exercise.bar_weight_kg };
+  return {
+    isBodyweight: exercise.is_bodyweight,
+    bodyweightPercent: exercise.bodyweight_percent,
+    isDumbbell: exercise.is_dumbbell,
+    barWeightKg: exercise.bar_weight_kg,
+  };
 }
 
 export default function ExerciseDetail() {
@@ -89,7 +94,6 @@ export default function ExerciseDetail() {
   if (loading) return <p className="muted">Loading…</p>;
   if (!exercise) return <p className="muted">Exercise not found.</p>;
 
-  const isOwner = exercise.created_by === user?.id;
   const hasNoMuscles = exercise.primary_muscles.length === 0 && exercise.secondary_muscles.length === 0;
 
   return (
@@ -97,7 +101,12 @@ export default function ExerciseDetail() {
       <div className="row between">
         <h1>{exercise.name}</h1>
         <div className="row" style={{ gap: 6 }}>
-          {exercise.is_bodyweight && <span className="chip focus">Bodyweight</span>}
+          {exercise.is_bodyweight && (
+            <span className="chip focus">
+              Bodyweight
+              {exercise.bodyweight_percent !== 100 ? ` — ${exercise.bodyweight_percent}% of body weight` : ""}
+            </span>
+          )}
           {exercise.is_dumbbell && <span className="chip focus">Dumbbell — ×2 for volume</span>}
           {exercise.bar_weight_kg != null && (
             <span className="chip focus">Barbell — +{exercise.bar_weight_kg} kg bar</span>
@@ -148,8 +157,8 @@ export default function ExerciseDetail() {
       <div className="panel">
         {hasNoMuscles && (
           <p className="error-text" style={{ marginTop: 0 }}>
-            No muscles assigned to this exercise — it won't show up in Group's muscle heat chart.
-            {isOwner ? " Edit it below to add some." : ""}
+            No muscles assigned to this exercise — it won't show up in Group's muscle heat chart. Edit it below
+            to add some.
           </p>
         )}
         <p className="muted" style={{ fontSize: 12, margin: "0 0 8px" }}>
@@ -174,16 +183,16 @@ export default function ExerciseDetail() {
         </div>
       </div>
 
-      {isOwner && (
-        <div className="row" style={{ marginTop: 16 }}>
-          <Link to={`/exercises/${exercise.id}/edit`}>
-            <button type="button">Edit</button>
-          </Link>
+      <div className="row" style={{ marginTop: 16 }}>
+        <Link to={`/exercises/${exercise.id}/edit`}>
+          <button type="button">Edit</button>
+        </Link>
+        {exercise.created_by === user?.id && (
           <button type="button" className="danger" onClick={handleDelete} disabled={deleting}>
             {deleting ? "Deleting…" : "Delete"}
           </button>
-        </div>
-      )}
+        )}
+      </div>
       {error && <p className="error-text">{error}</p>}
     </div>
   );

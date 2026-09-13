@@ -55,13 +55,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // Heartbeat: touch last_seen on load and then periodically while the tab
-  // stays open, so "last seen" in the group view stays fresh.
+  // stays open, so "last seen" in the group view stays fresh. Logged on
+  // failure -- this used to fail silently (no .then/.catch at all), which
+  // is indistinguishable from "last seen just never updates" in the UI.
   useEffect(() => {
     if (!session) return;
-    supabase.rpc("touch_last_seen");
-    const interval = setInterval(() => {
-      supabase.rpc("touch_last_seen");
-    }, 5 * 60 * 1000);
+    function touch() {
+      supabase.rpc("touch_last_seen").then(({ error }) => {
+        if (error) console.error("touch_last_seen failed:", error.message);
+      });
+    }
+    touch();
+    const interval = setInterval(touch, 5 * 60 * 1000);
     return () => clearInterval(interval);
   }, [session]);
 

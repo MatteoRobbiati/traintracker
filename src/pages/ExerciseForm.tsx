@@ -11,6 +11,7 @@ import type { Muscle } from "../constants/muscles";
 // resets the others, matching the exercise_equipment_exclusive DB constraint.
 type EquipmentKind = "none" | "bodyweight" | "dumbbell" | "barbell";
 const DEFAULT_BAR_WEIGHT = "20";
+const DEFAULT_BODYWEIGHT_PERCENT = "100";
 
 export default function ExerciseForm() {
   const { id } = useParams();
@@ -22,6 +23,7 @@ export default function ExerciseForm() {
   const [description, setDescription] = useState("");
   const [equipment, setEquipment] = useState<EquipmentKind>("none");
   const [barWeight, setBarWeight] = useState(DEFAULT_BAR_WEIGHT);
+  const [bodyweightPercent, setBodyweightPercent] = useState(DEFAULT_BODYWEIGHT_PERCENT);
   const [primary, setPrimary] = useState<Muscle[]>([]);
   const [secondary, setSecondary] = useState<Muscle[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -39,8 +41,10 @@ export default function ExerciseForm() {
         if (data) {
           setName(data.name);
           setDescription(data.description ?? "");
-          if (data.is_bodyweight) setEquipment("bodyweight");
-          else if (data.is_dumbbell) setEquipment("dumbbell");
+          if (data.is_bodyweight) {
+            setEquipment("bodyweight");
+            setBodyweightPercent(String(data.bodyweight_percent));
+          } else if (data.is_dumbbell) setEquipment("dumbbell");
           else if (data.bar_weight_kg != null) {
             setEquipment("barbell");
             setBarWeight(String(data.bar_weight_kg));
@@ -74,6 +78,7 @@ export default function ExerciseForm() {
       name: name.trim(),
       description: description.trim() || null,
       is_bodyweight: equipment === "bodyweight",
+      bodyweight_percent: equipment === "bodyweight" ? Number(bodyweightPercent) || 100 : 100,
       is_dumbbell: equipment === "dumbbell",
       bar_weight_kg: equipment === "barbell" ? Number(barWeight) || 0 : null,
       primary_muscles: primary,
@@ -141,6 +146,25 @@ export default function ExerciseForm() {
             {equipment === "barbell" && "Logged weight is what's added — the bar's own weight below is added on top."}
             {equipment === "none" && "Logged weight is the full working weight, as-is."}
           </p>
+          {equipment === "bodyweight" && (
+            <div className="field" style={{ maxWidth: 160, marginTop: 8 }}>
+              <label htmlFor="bodyweightPercent">Body weight involved (%)</label>
+              <input
+                id="bodyweightPercent"
+                type="number"
+                inputMode="decimal"
+                min={1}
+                max={100}
+                step="1"
+                value={bodyweightPercent}
+                onChange={(e) => setBodyweightPercent(e.target.value)}
+              />
+              <p className="muted" style={{ fontSize: 12, margin: "4px 0 0" }}>
+                How much of body weight this movement actually loads — e.g. pull-ups ≈ 100%, a back extension
+                more like 65%. Volume and "massimale" both use this.
+              </p>
+            </div>
+          )}
           {equipment === "barbell" && (
             <div className="field" style={{ maxWidth: 160, marginTop: 8 }}>
               <label htmlFor="barWeight">Bar weight (kg)</label>
