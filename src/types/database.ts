@@ -31,6 +31,10 @@ export type Exercise = {
   primary_muscles: Muscle[];
   secondary_muscles: Muscle[];
   is_bodyweight: boolean;
+  // Only meaningful when is_bodyweight is true -- what fraction of body
+  // weight this movement loads (pull-ups ~100, back extension ~65). Always
+  // 100 (and ignored) otherwise. See src/lib/format.ts effectiveWeight().
+  bodyweight_percent: number;
   // Mutually exclusive with is_bodyweight and with each other -- see
   // src/lib/format.ts effectiveWeight() and the exercise_equipment_exclusive
   // CHECK constraint in supabase/schema.sql.

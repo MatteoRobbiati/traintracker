@@ -59,6 +59,10 @@ create table public.exercises (
   primary_muscles    text[] not null default '{}',
   secondary_muscles  text[] not null default '{}',
   is_bodyweight      boolean not null default false,
+  -- Only meaningful when is_bodyweight is true: what fraction of body
+  -- weight this specific movement actually loads (pull-ups ~100, a back
+  -- extension more like 65) -- see src/lib/format.ts effectiveWeight().
+  bodyweight_percent numeric(5,2) not null default 100 check (bodyweight_percent > 0 and bodyweight_percent <= 100),
   is_dumbbell        boolean not null default false,  -- logged weight is per dumbbell; volume/effective weight doubles it
   bar_weight_kg      numeric(5,2) check (bar_weight_kg >= 0), -- barbell exercises: logged weight is what's added, this is the bar itself
   created_by         uuid references public.profiles(id) on delete set null,
@@ -338,13 +342,15 @@ create policy "weight_logs_update_own" on public.body_weight_logs
 create policy "weight_logs_delete_own" on public.body_weight_logs
   for delete to authenticated using (user_id = auth.uid());
 
--- exercises (community library: anyone inserts, only the creator edits/removes)
+-- exercises (community library: anyone inserts or edits -- it's a shared
+-- reference list, not personal data -- but only the creator removes one
+-- outright).
 create policy "exercises_select_all" on public.exercises
   for select to authenticated using (true);
 create policy "exercises_insert_any" on public.exercises
   for insert to authenticated with check (created_by = auth.uid());
-create policy "exercises_update_own" on public.exercises
-  for update to authenticated using (created_by = auth.uid());
+create policy "exercises_update_any" on public.exercises
+  for update to authenticated using (true);
 create policy "exercises_delete_own" on public.exercises
   for delete to authenticated using (created_by = auth.uid());
 

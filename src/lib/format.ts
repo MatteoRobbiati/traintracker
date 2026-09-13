@@ -41,6 +41,11 @@ export function formatDate(iso: string): string {
  */
 export interface Equipment {
   isBodyweight: boolean;
+  /** Only meaningful when isBodyweight is true: what fraction of body weight
+   * this specific movement actually loads -- a pull-up is ~100%, a back
+   * extension more like 65%. Defaults to 100 (full body weight) wherever a
+   * caller doesn't have a real value. */
+  bodyweightPercent: number;
   /** Logged weight is per dumbbell (both hands work the same weight); the
    * total being moved is double that. */
   isDumbbell: boolean;
@@ -58,7 +63,7 @@ export interface Equipment {
  * movements, so this can come out lower than the logged weight too).
  */
 export function effectiveWeight(equipment: Equipment, weight: number, bodyWeightKg: number | null): number {
-  if (equipment.isBodyweight) return (bodyWeightKg ?? 0) + weight;
+  if (equipment.isBodyweight) return (bodyWeightKg ?? 0) * (equipment.bodyweightPercent / 100) + weight;
   if (equipment.barWeightKg != null) return equipment.barWeightKg + weight;
   if (equipment.isDumbbell) return weight * 2;
   return weight;

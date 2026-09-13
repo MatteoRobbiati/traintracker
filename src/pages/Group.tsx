@@ -38,6 +38,7 @@ interface SetRow {
     id: string;
     name: string;
     is_bodyweight: boolean;
+    bodyweight_percent: number;
     is_dumbbell: boolean;
     bar_weight_kg: number | null;
     primary_muscles: Muscle[];
@@ -124,7 +125,7 @@ export default function Group() {
         supabase
           .from("sets")
           .select(
-            "workout_id, weight, reps, workout:workouts(user_id, date), exercise:exercises(id, name, is_bodyweight, is_dumbbell, bar_weight_kg, primary_muscles, secondary_muscles)"
+            "workout_id, weight, reps, workout:workouts(user_id, date), exercise:exercises(id, name, is_bodyweight, bodyweight_percent, is_dumbbell, bar_weight_kg, primary_muscles, secondary_muscles)"
           ),
         supabase
           .from("body_weight_logs")
@@ -186,6 +187,7 @@ export default function Group() {
           volume: setVolume({
             equipment: {
               isBodyweight: r.exercise!.is_bodyweight,
+              bodyweightPercent: r.exercise!.bodyweight_percent,
               isDumbbell: r.exercise!.is_dumbbell,
               barWeightKg: r.exercise!.bar_weight_kg,
             } satisfies Equipment,

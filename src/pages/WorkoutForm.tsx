@@ -22,6 +22,7 @@ interface ExerciseOption {
   id: string;
   name: string;
   is_bodyweight: boolean;
+  bodyweight_percent: number;
   is_dumbbell: boolean;
   bar_weight_kg: number | null;
 }
@@ -29,6 +30,7 @@ interface ExerciseOption {
 function equipmentOf(exercise: ExerciseOption | undefined): Equipment {
   return {
     isBodyweight: !!exercise?.is_bodyweight,
+    bodyweightPercent: exercise?.bodyweight_percent ?? 100,
     isDumbbell: !!exercise?.is_dumbbell,
     barWeightKg: exercise?.bar_weight_kg ?? null,
   };
@@ -304,7 +306,7 @@ export default function WorkoutForm() {
     if (!user) return;
     supabase
       .from("exercises")
-      .select("id, name, is_bodyweight, is_dumbbell, bar_weight_kg")
+      .select("id, name, is_bodyweight, bodyweight_percent, is_dumbbell, bar_weight_kg")
       .order("name")
       .then(({ data }) => setExerciseOptions(data ?? []));
     supabase

@@ -3,7 +3,7 @@ import { supabase } from "../lib/supabaseClient";
 import { useAuth } from "../context/AuthContext";
 import { useConnections } from "../hooks/useConnections";
 import ConnectionActions from "./ConnectionActions";
-import { ROOMS, DEFAULT_ROOM, type RoomId } from "../constants/rooms";
+import { ROOMS, type RoomId } from "../constants/rooms";
 import { formatDate } from "../lib/format";
 import type { Message, Profile } from "../types/database";
 
@@ -26,12 +26,16 @@ function chatDateLabel(iso: string): string {
 interface ChatPanelProps {
   open: boolean;
   onClose: () => void;
+  /** Which room tab is active -- lifted to App.tsx so other pages (the
+   * Dashboard "what's new" banner) can jump straight to a specific room. */
+  room: RoomId;
+  onRoomChange: (room: RoomId) => void;
 }
 
 // Always mounted (App.tsx renders it once, toggled via CSS) so the message
 // history, scroll position, and realtime subscriptions survive opening and
 // closing the panel — it behaves like a persistent side widget, not a page.
-export default function ChatPanel({ open, onClose }: ChatPanelProps) {
+export default function ChatPanel({ open, onClose, room, onRoomChange }: ChatPanelProps) {
   const { user, onlineUsers } = useAuth();
   const {
     rowFor,
@@ -45,7 +49,6 @@ export default function ChatPanel({ open, onClose }: ChatPanelProps) {
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [names, setNames] = useState<Record<string, string>>({});
-  const [room, setRoom] = useState<RoomId>(DEFAULT_ROOM);
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -148,7 +151,7 @@ export default function ChatPanel({ open, onClose }: ChatPanelProps) {
               key={r.id}
               type="button"
               className={`chat-room-tab${room === r.id ? " active" : ""}`}
-              onClick={() => setRoom(r.id)}
+              onClick={() => onRoomChange(r.id)}
             >
               {r.label}
             </button>
