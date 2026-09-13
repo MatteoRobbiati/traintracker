@@ -15,6 +15,7 @@ import {
 import { saveWorkoutAsTemplate } from "../lib/templates";
 import { loadDraft, saveDraft, clearDraft, draftHasContent } from "../lib/workoutDraft";
 import SearchableSelect from "../components/SearchableSelect";
+import { useConnections } from "../hooks/useConnections";
 import type { WorkoutTemplate, WorkoutType } from "../types/database";
 
 interface ExerciseOption {
@@ -92,6 +93,35 @@ async function fetchLastSets(userId: string, exerciseId: string): Promise<SetRow
   }));
 }
 
+// For "Training with" (see handleSubmit): each tagged partner's copy of the
+// workout uses their own last known weight per exercise, not yours. Batched
+// across every exercise in the workout in one query, same "latest workout
+// per exercise" logic as fetchLastSets above.
+async function fetchPartnerWeightsByExercise(
+  partnerId: string,
+  exerciseIds: string[]
+): Promise<Record<string, number[]>> {
+  if (exerciseIds.length === 0) return {};
+  const { data } = await supabase
+    .from("sets")
+    .select("exercise_id, workout_id, weight, set_order, workout:workouts!inner(date, user_id)")
+    .in("exercise_id", exerciseIds)
+    .eq("workout.user_id", partnerId)
+    .order("date", { foreignTable: "workout", ascending: false })
+    .order("set_order", { ascending: true })
+    .limit(300);
+
+  const result: Record<string, number[]> = {};
+  if (!data) return result;
+  const latestWorkoutByExercise = new Map<string, string>();
+  for (const r of data as any[]) {
+    if (!latestWorkoutByExercise.has(r.exercise_id)) latestWorkoutByExercise.set(r.exercise_id, r.workout_id);
+    if (r.workout_id !== latestWorkoutByExercise.get(r.exercise_id)) continue;
+    (result[r.exercise_id] ??= []).push(Number(r.weight));
+  }
+  return result;
+}
+
 const OTHER_SPORT = "other";
 
 export default function WorkoutForm() {
@@ -99,6 +129,20 @@ export default function WorkoutForm() {
   const isEdit = Boolean(id);
   const { user } = useAuth();
   const navigate = useNavigate();
+
+  // Training partners: accepted connections you can tag as "training with"
+  // on a new workout (see the checklist further down + handleSubmit), so
+  // logging your session also logs a copy for them, using their own typical
+  // weight per exercise.
+  const { rows: connectionRows } = useConnections();
+  const acceptedConnections = connectionRows.filter((r) => r.status === "accepted").map((r) => r.profile);
+  const [partnerIds, setPartnerIds] = useState<string[]>([]);
+
+  function togglePartner(partnerId: string) {
+    setPartnerIds((prev) =>
+      prev.includes(partnerId) ? prev.filter((id) => id !== partnerId) : [...prev, partnerId]
+    );
+  }
 
   const [exerciseOptions, setExerciseOptions] = useState<ExerciseOption[]>([]);
   const [bodyWeightKg, setBodyWeightKg] = useState<number | null>(null);
@@ -479,8 +523,17 @@ export default function WorkoutForm() {
     setCardioBlocks((prev) => prev.filter((c) => c.key !== key));
   }
 
+  // New set starts from the previous one's weight (reps/rest still blank) --
+  // most sets of a block are the same weight, so this saves retyping it.
   function addSet(key: string) {
-    setBlocks((prev) => prev.map((b) => (b.key === key ? { ...b, sets: [...b.sets, emptySet()] } : b)));
+    setBlocks((prev) =>
+      prev.map((b) => {
+        if (b.key !== key) return b;
+        const previous = b.sets[b.sets.length - 1];
+        const next = previous ? { ...emptySet(), weight: previous.weight } : emptySet();
+        return { ...b, sets: [...b.sets, next] };
+      })
+    );
   }
 
   function startRest(key: string) {
@@ -528,6 +581,76 @@ export default function WorkoutForm() {
     );
   }
 
+  // Creates a training partner's copy of the workout being logged: same
+  // exercises/sets/reps/cardio (or same sport/distance for endurance), but
+  // each strength set's weight is the partner's own last known weight for
+  // that exercise -- falling back to what you logged, if they have none yet.
+  async function logWorkoutForPartner(
+    partnerId: string,
+    sessionGroupId: string,
+    workoutPayload: {
+      date: string;
+      warmup: string | null;
+      notes: string | null;
+      duration_minutes: number | null;
+      workout_type: WorkoutType;
+    }
+  ): Promise<string | null> {
+    const { data: partnerWorkout, error: workoutError } = await supabase
+      .from("workouts")
+      .insert({ ...workoutPayload, user_id: partnerId, session_group_id: sessionGroupId })
+      .select()
+      .single();
+    if (workoutError || !partnerWorkout) return workoutError?.message ?? "Failed to create workout.";
+
+    if (workoutType === "endurance") {
+      const resolvedSport = sport === OTHER_SPORT ? customSport.trim() : sport;
+      const { error } = await supabase.from("endurance_details").insert({
+        workout_id: partnerWorkout.id,
+        sport: resolvedSport,
+        discipline: sport === "climbing" && discipline ? discipline : null,
+        distance_km: distanceKm ? Number(distanceKm) : null,
+        session_detail: sessionDetail.trim() || null,
+      });
+      return error?.message ?? null;
+    }
+
+    const exerciseIds = [...new Set(blocks.map((b) => b.exerciseId))];
+    const partnerWeights = await fetchPartnerWeightsByExercise(partnerId, exerciseIds);
+    const nextIndex: Record<string, number> = {};
+    const setRows = blocks.flatMap((block, blockIndex) =>
+      block.sets.map((s, setIndex) => {
+        const known = partnerWeights[block.exerciseId];
+        const i = nextIndex[block.exerciseId] ?? 0;
+        nextIndex[block.exerciseId] = i + 1;
+        const fallback = Number(s.weight) || 0;
+        const partnerWeight = known?.[i] ?? known?.[known.length - 1] ?? fallback;
+        return {
+          workout_id: partnerWorkout.id,
+          exercise_id: block.exerciseId,
+          weight: partnerWeight,
+          reps: Number(s.reps) || 0,
+          rest_time_seconds: s.restSeconds ? Number(s.restSeconds) : null,
+          set_order: blockIndex * 1000 + setIndex,
+        };
+      })
+    );
+    const cardioRows = cardioBlocks.map((c, i) => ({
+      workout_id: partnerWorkout.id,
+      activity: c.activity,
+      purpose: c.purpose,
+      duration_minutes: c.durationMinutes ? Number(c.durationMinutes) : null,
+      incline_percent: c.inclinePercent ? Number(c.inclinePercent) : null,
+      speed_kmh: c.speedKmh ? Number(c.speedKmh) : null,
+      block_order: i,
+    }));
+    const [{ error: setsError }, { error: cardioError }] = await Promise.all([
+      setRows.length > 0 ? supabase.from("sets").insert(setRows) : Promise.resolve({ error: null }),
+      cardioRows.length > 0 ? supabase.from("cardio_blocks").insert(cardioRows) : Promise.resolve({ error: null }),
+    ]);
+    return (setsError ?? cardioError)?.message ?? null;
+  }
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!user) return;
@@ -552,6 +675,10 @@ export default function WorkoutForm() {
       duration_minutes: duration ? Number(duration) : null,
       workout_type: workoutType,
     };
+    // Ties your workout together with each training partner's auto-created
+    // copy (see logWorkoutForPartner) so they can be found/cross-linked.
+    // Only set on a fresh, non-edit submit that actually tags someone.
+    const sessionGroupId = !isEdit && partnerIds.length > 0 ? crypto.randomUUID() : null;
 
     let workoutId = id;
     if (isEdit) {
@@ -564,7 +691,7 @@ export default function WorkoutForm() {
     } else {
       const { data: workout, error: workoutError } = await supabase
         .from("workouts")
-        .insert({ ...workoutPayload, user_id: user.id })
+        .insert({ ...workoutPayload, user_id: user.id, session_group_id: sessionGroupId })
         .select()
         .single();
       if (workoutError || !workout) {
@@ -583,9 +710,9 @@ export default function WorkoutForm() {
         distance_km: distanceKm ? Number(distanceKm) : null,
         session_detail: sessionDetail.trim() || null,
       });
-      setSubmitting(false);
       if (detailsError) {
         setError(detailsError.message);
+        setSubmitting(false);
         return;
       }
     } else {
@@ -625,13 +752,27 @@ export default function WorkoutForm() {
         setRows.length > 0 ? supabase.from("sets").insert(setRows) : Promise.resolve({ error: null }),
         cardioRows.length > 0 ? supabase.from("cardio_blocks").insert(cardioRows) : Promise.resolve({ error: null }),
       ]);
-      setSubmitting(false);
       if (setsError || cardioError) {
         setError((setsError ?? cardioError)!.message);
+        setSubmitting(false);
         return;
       }
     }
 
+    if (sessionGroupId) {
+      const partnerErrors: string[] = [];
+      for (const partnerId of partnerIds) {
+        const message = await logWorkoutForPartner(partnerId, sessionGroupId, workoutPayload);
+        if (message) partnerErrors.push(message);
+      }
+      if (partnerErrors.length > 0) {
+        setSubmitting(false);
+        setError(`Saved your workout, but couldn't log it for everyone you trained with: ${partnerErrors.join("; ")}`);
+        return;
+      }
+    }
+
+    setSubmitting(false);
     if (!isEdit) clearDraft();
     navigate(`/workouts/${workoutId}`);
   }
@@ -644,7 +785,9 @@ export default function WorkoutForm() {
       {draftRestoredAt && (
         <div className="panel" style={{ marginBottom: 16, borderColor: "var(--focus)" }}>
           <div className="row between">
-            <span className="chip focus">📝 Workout in progress — continuing where you left off</span>
+            <span className="chip focus" style={{ whiteSpace: "normal" }}>
+              📝 Workout in progress — continuing where you left off
+            </span>
             <button type="button" className="ghost" onClick={discardDraft}>
               Discard draft
             </button>
@@ -721,6 +864,42 @@ export default function WorkoutForm() {
             />
           </div>
         </div>
+
+        {!isEdit && acceptedConnections.length > 0 && (
+          <div className="field">
+            <label>Training with</label>
+            <div className="row" style={{ gap: "6px 10px" }}>
+              {acceptedConnections.map((p) => {
+                const checked = partnerIds.includes(p.id);
+                return (
+                  <label
+                    key={p.id}
+                    className="chip"
+                    style={{
+                      cursor: "pointer",
+                      background: checked ? "var(--ember-muted)" : undefined,
+                      borderColor: checked ? "var(--ember)" : undefined,
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      style={{ width: "auto", marginRight: 6 }}
+                      checked={checked}
+                      onChange={() => togglePartner(p.id)}
+                    />
+                    {p.name}
+                  </label>
+                );
+              })}
+            </div>
+            {partnerIds.length > 0 && (
+              <p className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+                Also logs this workout for whoever's checked, using their own typical weight per exercise (falling
+                back to yours where they have no history).
+              </p>
+            )}
+          </div>
+        )}
 
         {workoutType === "strength" ? (
           <>

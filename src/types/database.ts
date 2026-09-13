@@ -51,6 +51,11 @@ export type Workout = {
   duration_minutes: number | null;
   workout_type: WorkoutType;
   created_at: string;
+  // Training partners -- see the "Training with" picker in WorkoutForm and
+  // migration 008_training_partners.sql. Both null for an ordinary solo
+  // workout.
+  logged_by_id: string | null;
+  session_group_id: string | null;
 };
 
 export type EnduranceDiscipline = "boulder" | "rope" | "both";
