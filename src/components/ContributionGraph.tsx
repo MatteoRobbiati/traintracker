@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Link } from "react-router-dom";
 import { formatDate } from "../lib/format";
 
@@ -23,9 +23,21 @@ export interface ContributionWorkout {
 }
 
 interface ContributionGraphProps {
-  workouts: ContributionWorkout[];
+  /** Per-workout entries (id + date + label) so a clicked day can list and
+   * link to what happened -- use this when the caller has real workout rows
+   * (Dashboard, Profile's own calendar). */
+  workouts?: ContributionWorkout[];
+  /** Bare "YYYY-MM-DD" dates, no click-through detail beyond the count --
+   * for an aggregate view with no single owner (Group's combined calendar)
+   * or a read-only one (viewing a connection's calendar). Ignored if
+   * `workouts` is also given. */
+  dates?: string[];
   /** How many weeks of history to show. GitHub shows ~52; that's the point. */
   weeks?: number;
+  /** Overrides the page's own --ember/--ember-muted for this graph only --
+   * for showing someone else's calendar in *their* chosen accent color (see
+   * src/lib/theme.ts accentColors()) rather than the current viewer's. */
+  colorOverride?: { ember: string; emberMuted: string };
 }
 
 // A GitHub-contributions-style calendar: one column per week, one square per
@@ -33,7 +45,7 @@ interface ContributionGraphProps {
 // to streak logic (see src/lib/streak.ts) -- this is just a visual density
 // map, so a rest day shows as an empty square without implying anything
 // broke, which is the whole point of not being Duolingo about it.
-export default function ContributionGraph({ workouts, weeks = 52 }: ContributionGraphProps) {
+export default function ContributionGraph({ workouts, dates, weeks = 52, colorOverride }: ContributionGraphProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   // dayNum of the clicked cell, so tapping it again (or the ✕) closes it --
   // a fixed panel under the grid rather than a floating tooltip, which is
@@ -43,15 +55,27 @@ export default function ContributionGraph({ workouts, weeks = 52 }: Contribution
 
   const byDate = useMemo(() => {
     const map = new Map<number, ContributionWorkout[]>();
-    for (const w of workouts) {
-      const [y, m, d] = w.date.split("-").map(Number);
-      const dn = dayNumber(y, m - 1, d);
-      const list = map.get(dn) ?? [];
-      list.push(w);
-      map.set(dn, list);
+    if (workouts) {
+      for (const w of workouts) {
+        const [y, m, d] = w.date.split("-").map(Number);
+        const dn = dayNumber(y, m - 1, d);
+        const list = map.get(dn) ?? [];
+        list.push(w);
+        map.set(dn, list);
+      }
+    } else {
+      // No per-workout detail available -- still track a count per day (as
+      // placeholder entries) so a click can at least say how many.
+      for (const dateStr of dates ?? []) {
+        const [y, m, d] = dateStr.split("-").map(Number);
+        const dn = dayNumber(y, m - 1, d);
+        const list = map.get(dn) ?? [];
+        list.push({ id: `${dn}-${list.length}`, date: dateStr, label: "" });
+        map.set(dn, list);
+      }
     }
     return map;
-  }, [workouts]);
+  }, [workouts, dates]);
 
   const columns = useMemo(() => {
     const now = new Date();
@@ -93,9 +117,16 @@ export default function ContributionGraph({ workouts, weeks = 52 }: Contribution
   }
 
   const selectedWorkouts = selectedDay != null ? byDate.get(selectedDay) ?? [] : [];
+  // Only render as links when the caller gave us real workout ids -- the
+  // bare-`dates` mode fabricates placeholder ids that don't point anywhere.
+  const linkable = !!workouts;
+
+  const overrideStyle = colorOverride
+    ? ({ "--ember": colorOverride.ember, "--ember-muted": colorOverride.emberMuted } as CSSProperties)
+    : undefined;
 
   return (
-    <div>
+    <div style={overrideStyle}>
       <div className="cg-scroll" ref={scrollRef}>
         <div className="cg-grid">
           {columns.map((col, i) => {
@@ -151,7 +182,7 @@ export default function ContributionGraph({ workouts, weeks = 52 }: Contribution
             <p className="muted" style={{ margin: "6px 0 0", fontSize: 13 }}>
               No workouts logged.
             </p>
-          ) : (
+          ) : linkable ? (
             <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
               {selectedWorkouts.map((w) => (
                 <li key={w.id}>
@@ -159,6 +190,10 @@ export default function ContributionGraph({ workouts, weeks = 52 }: Contribution
                 </li>
               ))}
             </ul>
+          ) : (
+            <p className="muted" style={{ margin: "6px 0 0", fontSize: 13 }}>
+              {selectedWorkouts.length} workout{selectedWorkouts.length === 1 ? "" : "s"} logged.
+            </p>
           )}
         </div>
       )}

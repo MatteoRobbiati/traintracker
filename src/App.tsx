@@ -56,6 +56,7 @@ export default function App() {
               <Route path="/workouts/:id/edit" element={<WorkoutForm />} />
               <Route path="/group" element={<Group />} />
               <Route path="/profile" element={<Profile />} />
+              <Route path="/profile/:userId" element={<Profile />} />
               <Route path="/connections" element={<Connections />} />
             </Route>
           </Routes>

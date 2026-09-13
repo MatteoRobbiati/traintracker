@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { useConnections } from "../hooks/useConnections";
 import ConnectionActions from "../components/ConnectionActions";
 import { useAuth } from "../context/AuthContext";
@@ -73,7 +74,11 @@ export default function Connections() {
                           background: online ? "var(--focus)" : "var(--stone)",
                         }}
                       />
-                      {row.profile.name}
+                      {row.status === "accepted" ? (
+                        <Link to={`/profile/${row.profile.id}`}>{row.profile.name}</Link>
+                      ) : (
+                        row.profile.name
+                      )}
                     </td>
                     <td className="muted">{online ? "Online now" : relativeTime(row.profile.last_seen)}</td>
                     <td>
