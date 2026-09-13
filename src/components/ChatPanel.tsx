@@ -1,12 +1,27 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { supabase } from "../lib/supabaseClient";
 import { useAuth } from "../context/AuthContext";
 import { useConnections } from "../hooks/useConnections";
 import ConnectionActions from "./ConnectionActions";
 import { ROOMS, DEFAULT_ROOM, type RoomId } from "../constants/rooms";
+import { formatDate } from "../lib/format";
 import type { Message, Profile } from "../types/database";
 
 const MAX_HISTORY = 500;
+
+// "Today"/"Yesterday" read faster at a glance than a repeated date, and
+// still fall back to a real date for anything older -- shown once as a
+// divider between days rather than on every single bubble.
+function chatDateLabel(iso: string): string {
+  const d = new Date(iso);
+  const now = new Date();
+  const sameDate = (a: Date, b: Date) => a.toDateString() === b.toDateString();
+  if (sameDate(d, now)) return "Today";
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (sameDate(d, yesterday)) return "Yesterday";
+  return formatDate(iso);
+}
 
 interface ChatPanelProps {
   open: boolean;
@@ -184,33 +199,42 @@ export default function ChatPanel({ open, onClose }: ChatPanelProps) {
         <div className="chat-panel-messages">
           {loading && <p className="muted">Loading…</p>}
           {!loading && roomMessages.length === 0 && <p className="muted">No messages yet — say hi.</p>}
-          {roomMessages.map((m) => {
+          {roomMessages.map((m, i) => {
             const mine = m.sender_id === user?.id;
+            const prev = roomMessages[i - 1];
+            const showDateDivider =
+              !prev || new Date(prev.created_at).toDateString() !== new Date(m.created_at).toDateString();
             return (
-              <div key={m.id} style={{ alignSelf: mine ? "flex-end" : "flex-start", maxWidth: "85%" }}>
-                {!mine && (
-                  <p className="muted" style={{ fontSize: 11, margin: "0 0 2px 4px" }}>
-                    {names[m.sender_id] ?? "Someone"}
+              <Fragment key={m.id}>
+                {showDateDivider && <div className="chat-date-divider">{chatDateLabel(m.created_at)}</div>}
+                <div style={{ alignSelf: mine ? "flex-end" : "flex-start", maxWidth: "85%" }}>
+                  {!mine && (
+                    <p className="muted" style={{ fontSize: 11, margin: "0 0 2px 4px" }}>
+                      {names[m.sender_id] ?? "Someone"}
+                    </p>
+                  )}
+                  <div
+                    style={{
+                      background: mine ? "var(--ember)" : "var(--paper)",
+                      color: mine ? "#fff" : "var(--ink)",
+                      border: mine ? "none" : "1px solid var(--line)",
+                      borderRadius: 12,
+                      padding: "8px 12px",
+                      whiteSpace: "pre-wrap",
+                      wordBreak: "break-word",
+                      fontSize: 14,
+                    }}
+                  >
+                    {m.body}
+                  </div>
+                  <p
+                    className="muted"
+                    style={{ fontSize: 10, margin: "2px 4px 0", textAlign: mine ? "right" : "left" }}
+                  >
+                    {new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                   </p>
-                )}
-                <div
-                  style={{
-                    background: mine ? "var(--ember)" : "var(--paper)",
-                    color: mine ? "#fff" : "var(--ink)",
-                    border: mine ? "none" : "1px solid var(--line)",
-                    borderRadius: 12,
-                    padding: "8px 12px",
-                    whiteSpace: "pre-wrap",
-                    wordBreak: "break-word",
-                    fontSize: 14,
-                  }}
-                >
-                  {m.body}
                 </div>
-                <p className="muted" style={{ fontSize: 10, margin: "2px 4px 0", textAlign: mine ? "right" : "left" }}>
-                  {new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                </p>
-              </div>
+              </Fragment>
             );
           })}
           <div ref={bottomRef} />

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
 import { useAuth } from "../context/AuthContext";
@@ -22,7 +22,11 @@ export default function Dashboard() {
   const [recentWorkouts, setRecentWorkouts] = useState<RecentWorkout[]>([]);
   const [latestWeight, setLatestWeight] = useState<number | null>(null);
   const [workoutCount, setWorkoutCount] = useState<number | null>(null);
-  const [workoutDates, setWorkoutDates] = useState<string[]>([]);
+  // Lightweight full history (not just the 5 shown below), for the activity
+  // calendar and its click-to-see-that-day's-workouts detail.
+  const [allWorkoutsLite, setAllWorkoutsLite] = useState<
+    { id: string; date: string; durationMinutes: number | null; sport: string | null }[]
+  >([]);
   const [streak, setStreak] = useState(computeStreak([]));
   const [loading, setLoading] = useState(true);
   const [hasDraft, setHasDraft] = useState(false);
@@ -40,7 +44,7 @@ export default function Dashboard() {
     let cancelled = false;
 
     async function load() {
-      const [{ data: workouts }, { data: weight }, { count }, { data: allDates }] = await Promise.all([
+      const [{ data: workouts }, { data: weight }, { count }, { data: allWorkouts }] = await Promise.all([
         supabase
           .from("workouts")
           .select("*, endurance_details(sport)")
@@ -58,7 +62,10 @@ export default function Dashboard() {
           .from("workouts")
           .select("*", { count: "exact", head: true })
           .eq("user_id", user!.id),
-        supabase.from("workouts").select("date").eq("user_id", user!.id),
+        supabase
+          .from("workouts")
+          .select("id, date, duration_minutes, endurance_details(sport)")
+          .eq("user_id", user!.id),
       ]);
       if (cancelled) return;
       setRecentWorkouts(
@@ -66,9 +73,14 @@ export default function Dashboard() {
       );
       setLatestWeight(weight?.weight_kg ?? null);
       setWorkoutCount(count ?? 0);
-      const dates = (allDates ?? []).map((w) => w.date);
-      setWorkoutDates(dates);
-      setStreak(computeStreak(dates));
+      const lite = (allWorkouts ?? []).map((w: any) => ({
+        id: w.id,
+        date: w.date,
+        durationMinutes: w.duration_minutes,
+        sport: w.endurance_details?.sport ?? null,
+      }));
+      setAllWorkoutsLite(lite);
+      setStreak(computeStreak(lite.map((w) => w.date)));
       setLoading(false);
     }
     load();
@@ -76,6 +88,18 @@ export default function Dashboard() {
       cancelled = true;
     };
   }, [user]);
+
+  const graphWorkouts = useMemo(
+    () =>
+      allWorkoutsLite.map((w) => ({
+        id: w.id,
+        date: w.date,
+        label: w.sport
+          ? sportLabel(w.sport)
+          : `Strength${w.durationMinutes != null ? ` · ${w.durationMinutes} min` : ""}`,
+      })),
+    [allWorkoutsLite]
+  );
 
   return (
     <div>
@@ -111,7 +135,7 @@ export default function Dashboard() {
             {streak.current > 0 ? `🔥 ${streak.current}-day streak` : "No active streak"} · Best {streak.longest}
           </span>
         </div>
-        <ContributionGraph dates={workoutDates} />
+        <ContributionGraph workouts={graphWorkouts} />
         <p className="muted" style={{ fontSize: 12, margin: "10px 0 0" }}>
           {streak.current > 0
             ? streak.onRestDay
