@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { BrowserRouter, Routes, Route, Outlet } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { BrowserRouter, Routes, Route, Outlet, useLocation } from "react-router-dom";
 import { AuthProvider } from "./context/AuthContext";
 import { ThemeProvider } from "./context/ThemeContext";
 import ProtectedRoute from "./components/ProtectedRoute";
@@ -30,7 +30,14 @@ export interface AppOutletContext {
 // and ChatPanel stay mounted (and the chat's realtime subscription stays
 // connected) across navigation instead of remounting per page.
 function AppLayout() {
+  const location = useLocation();
   const [chatOpen, setChatOpen] = useState(false);
+
+  // A new page should start at the top, not wherever the last one was
+  // scrolled to (on a phone that often meant landing mid-page).
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [location.pathname]);
   const [chatRoom, setChatRoom] = useState<RoomId>(DEFAULT_ROOM);
 
   function openChat(room?: RoomId) {
@@ -40,10 +47,13 @@ function AppLayout() {
 
   return (
     <ProtectedRoute>
-      <div className="app-shell" style={{ flexDirection: "column" }}>
+      <div className="app-shell">
         <Nav chatOpen={chatOpen} onToggleChat={() => setChatOpen((v) => !v)} />
         <main className="app-main">
-          <Outlet context={{ openChat } satisfies AppOutletContext} />
+          {/* Keyed by path so each page gets the enter animation. */}
+          <div className="page" key={location.pathname}>
+            <Outlet context={{ openChat } satisfies AppOutletContext} />
+          </div>
         </main>
         <ChatPanel
           open={chatOpen}

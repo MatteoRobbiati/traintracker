@@ -51,12 +51,10 @@ export default function Exercises() {
 
   return (
     <div>
-      <div className="row between">
+      <div className="page-header">
         <h1>Exercises</h1>
-        <Link to="/exercises/new">
-          <button type="button" className="primary">
-            + New exercise
-          </button>
+        <Link to="/exercises/new" className="btn primary">
+          + New exercise
         </Link>
       </div>
 

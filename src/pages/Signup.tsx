@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { LogoMark } from "../components/icons";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 
@@ -31,9 +32,13 @@ export default function Signup() {
   }
 
   return (
-    <div className="app-main" style={{ maxWidth: 380, marginTop: 60 }}>
-      <p className="eyebrow">TrainTrack</p>
+    <div className="auth-wrap page">
+      <div className="auth-card">
+      <span className="brand-mark">
+        <LogoMark width={22} height={22} />
+      </span>
       <h1>Sign up</h1>
+      <p className="muted" style={{ marginBottom: 20 }}>Track workouts with your crew.</p>
       {done ? (
         <p className="panel">Account created — check your email if confirmation is required, then log in.</p>
       ) : (
@@ -66,7 +71,7 @@ export default function Signup() {
             />
           </div>
           {error && <p className="error-text">{error}</p>}
-          <button type="submit" className="primary" disabled={submitting}>
+          <button type="submit" className="primary lg" disabled={submitting}>
             {submitting ? "Creating…" : "Create account"}
           </button>
         </form>
@@ -74,6 +79,7 @@ export default function Signup() {
       <p className="muted" style={{ marginTop: 16 }}>
         Already have an account? <Link to="/login">Log in</Link>
       </p>
+      </div>
     </div>
   );
 }

@@ -6,6 +6,7 @@ import ConnectionActions from "./ConnectionActions";
 import { ROOMS, type RoomId } from "../constants/rooms";
 import { formatDate } from "../lib/format";
 import type { Message, Profile } from "../types/database";
+import { CloseIcon } from "./icons";
 
 const MAX_HISTORY = 500;
 
@@ -139,9 +140,9 @@ export default function ChatPanel({ open, onClose, room, onRoomChange }: ChatPan
       {open && <div className="chat-panel-backdrop" onClick={onClose} />}
       <aside className={`chat-panel${open ? " chat-panel-open" : ""}`} aria-hidden={!open}>
         <div className="chat-panel-header">
-          <strong>Chat</strong>
-          <button type="button" className="ghost" onClick={onClose} aria-label="Close chat">
-            ✕
+          <h3>Chat</h3>
+          <button type="button" className="icon-btn" onClick={onClose} aria-label="Close chat">
+            <CloseIcon />
           </button>
         </div>
 
@@ -218,11 +219,12 @@ export default function ChatPanel({ open, onClose, room, onRoomChange }: ChatPan
                   )}
                   <div
                     style={{
-                      background: mine ? "var(--ember)" : "var(--paper)",
+                      background: mine ? "var(--ember)" : "var(--paper-raised)",
                       color: mine ? "#fff" : "var(--ink)",
                       border: mine ? "none" : "1px solid var(--line)",
-                      borderRadius: 12,
-                      padding: "8px 12px",
+                      borderRadius: mine ? "18px 18px 6px 18px" : "18px 18px 18px 6px",
+                      padding: "9px 14px",
+                      boxShadow: mine ? "none" : "var(--shadow-sm)",
                       whiteSpace: "pre-wrap",
                       wordBreak: "break-word",
                       fontSize: 14,
@@ -243,7 +245,7 @@ export default function ChatPanel({ open, onClose, room, onRoomChange }: ChatPan
           <div ref={bottomRef} />
         </div>
 
-        <form onSubmit={handleSend} className="row" style={{ gap: 8, padding: "10px 14px" }}>
+        <form onSubmit={handleSend} className="row nowrap" style={{ gap: 8, padding: "10px 14px" }}>
           <input
             value={draft}
             onChange={(e) => setDraft(e.target.value)}

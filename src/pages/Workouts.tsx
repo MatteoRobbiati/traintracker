@@ -2,23 +2,19 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
 import { useAuth } from "../context/AuthContext";
-import { formatDate } from "../lib/format";
-import { SPORT_LABELS } from "../constants/sports";
-import type { Workout } from "../types/database";
+import WorkoutCard, { type WorkoutCardData } from "../components/WorkoutCard";
+import Disclosure from "../components/Disclosure";
+import { PlusIcon } from "../components/icons";
 
-interface WorkoutWithExtras extends Workout {
-  exerciseNames: string[];
-  sport: string | null;
-}
-
-function sportLabel(sport: string): string {
-  return (SPORT_LABELS as Record<string, string>)[sport] ?? sport;
+function monthLabel(date: string): string {
+  return new Date(`${date}T00:00:00`).toLocaleDateString(undefined, { month: "long", year: "numeric" });
 }
 
 export default function Workouts() {
   const { user } = useAuth();
-  const [workouts, setWorkouts] = useState<WorkoutWithExtras[]>([]);
+  const [workouts, setWorkouts] = useState<WorkoutCardData[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [exerciseFilter, setExerciseFilter] = useState("");
@@ -28,16 +24,29 @@ export default function Workouts() {
     if (!user) return;
     supabase
       .from("workouts")
-      .select("*, sets(exercise:exercises(name)), endurance_details(sport)")
+      .select("*, sets(set_order, exercise:exercises(name)), endurance_details(sport), logger:profiles!logged_by_id(name)")
       .eq("user_id", user.id)
       .order("date", { ascending: false })
-      .then(({ data }) => {
-        const mapped = (data ?? []).map((w: any) => ({
-          ...w,
-          exerciseNames: Array.from(
-            new Set((w.sets ?? []).map((s: any) => s.exercise?.name).filter(Boolean))
-          ) as string[],
+      .order("created_at", { ascending: false })
+      .then(({ data, error }) => {
+        if (error) setLoadError(error.message);
+        const mapped: WorkoutCardData[] = (data ?? []).map((w: any) => ({
+          id: w.id,
+          date: w.date,
+          workout_type: w.workout_type,
+          duration_minutes: w.duration_minutes,
           sport: w.endurance_details?.sport ?? null,
+          exerciseNames: Array.from(
+            new Set(
+              [...(w.sets ?? [])]
+                .sort((a: any, b: any) => a.set_order - b.set_order)
+                .map((s: any) => s.exercise?.name)
+                .filter(Boolean)
+            )
+          ) as string[],
+          songTitle: w.song_title ?? null,
+          songArtist: w.song_artist ?? null,
+          loggedByName: w.logged_by_id && w.logged_by_id !== w.user_id ? (w.logger?.name ?? "a friend") : null,
         }));
         setWorkouts(mapped);
         setLoading(false);
@@ -50,80 +59,130 @@ export default function Workouts() {
     return Array.from(names).sort();
   }, [workouts]);
 
-  const filtered = useMemo(() => {
-    return workouts.filter((w) => {
-      if (from && w.date < from) return false;
-      if (to && w.date > to) return false;
-      if (typeFilter && w.workout_type !== typeFilter) return false;
-      if (exerciseFilter && !w.exerciseNames.includes(exerciseFilter)) return false;
-      return true;
-    });
-  }, [workouts, from, to, exerciseFilter, typeFilter]);
+  const filtered = useMemo(
+    () =>
+      workouts.filter((w) => {
+        if (from && w.date < from) return false;
+        if (to && w.date > to) return false;
+        if (typeFilter && w.workout_type !== typeFilter) return false;
+        if (exerciseFilter && !w.exerciseNames.includes(exerciseFilter)) return false;
+        return true;
+      }),
+    [workouts, from, to, exerciseFilter, typeFilter]
+  );
+
+  const byMonth = useMemo(() => {
+    const groups: { label: string; items: WorkoutCardData[] }[] = [];
+    for (const w of filtered) {
+      const label = monthLabel(w.date);
+      const last = groups[groups.length - 1];
+      if (last && last.label === label) last.items.push(w);
+      else groups.push({ label, items: [w] });
+    }
+    return groups;
+  }, [filtered]);
+
+  const activeFilters = [from, to, exerciseFilter, typeFilter].filter(Boolean).length;
 
   return (
     <div>
-      <div className="row between">
-        <h1>Workout history</h1>
-        <Link to="/workouts/new">
-          <button type="button" className="primary">
-            + Log a workout
-          </button>
+      <div className="page-header">
+        <div>
+          <h1>Workouts</h1>
+          {!loading && (
+            <p className="sub">
+              {workouts.length} logged{activeFilters > 0 ? ` · ${filtered.length} shown` : ""}
+            </p>
+          )}
+        </div>
+        <Link to="/workouts/new" className="btn primary">
+          <PlusIcon width={18} height={18} /> New
         </Link>
       </div>
 
-      <div className="row panel" style={{ marginBottom: 16 }}>
-        <div className="field">
-          <label htmlFor="from">From</label>
-          <input id="from" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
-        </div>
-        <div className="field">
-          <label htmlFor="to">To</label>
-          <input id="to" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
-        </div>
-        <div className="field" style={{ minWidth: 150 }}>
-          <label htmlFor="type">Type</label>
-          <select id="type" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value as typeof typeFilter)}>
-            <option value="">All types</option>
-            <option value="strength">Strength</option>
-            <option value="endurance">Endurance</option>
-          </select>
-        </div>
-        <div className="field" style={{ minWidth: 180 }}>
-          <label htmlFor="exercise">Exercise</label>
-          <select id="exercise" value={exerciseFilter} onChange={(e) => setExerciseFilter(e.target.value)}>
-            <option value="">All exercises</option>
-            {exerciseOptions.map((n) => (
-              <option key={n} value={n}>
-                {n}
-              </option>
+      <div style={{ marginBottom: 16 }}>
+        <Disclosure
+          autoOpen={activeFilters > 0}
+          summary={
+            <>
+              Filters
+              {activeFilters > 0 && <span className="nav-count">{activeFilters}</span>}
+            </>
+          }
+        >
+          <div className="segmented full" role="group" aria-label="Type">
+            {(["", "strength", "endurance"] as const).map((t) => (
+              <button key={t || "all"} type="button" aria-pressed={typeFilter === t} onClick={() => setTypeFilter(t)}>
+                {t === "" ? "All" : t === "strength" ? "Strength" : "Endurance"}
+              </button>
             ))}
-          </select>
-        </div>
-      </div>
-
-      {loading && <p className="muted">Loading…</p>}
-      {!loading && filtered.length === 0 && <p className="muted">No workouts match these filters.</p>}
-
-      <div className="card-list">
-        {filtered.map((w) => (
-          <Link key={w.id} to={`/workouts/${w.id}`} className="card-link">
-            <div className="row between">
-              <strong>{w.sport ? sportLabel(w.sport) : formatDate(w.date)}</strong>
-              <div className="row" style={{ gap: 6 }}>
-                {w.sport && <span className="chip">{formatDate(w.date)}</span>}
-                {w.duration_minutes != null && <span className="chip">{w.duration_minutes} min</span>}
-              </div>
+          </div>
+          <div className="row nowrap" style={{ gap: 10 }}>
+            <div className="field grow">
+              <label htmlFor="from">From</label>
+              <input id="from" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
             </div>
-            <div className="row" style={{ marginTop: 6, gap: 6 }}>
-              {w.exerciseNames.map((n) => (
-                <span key={n} className="chip">
+            <div className="field grow">
+              <label htmlFor="to">To</label>
+              <input id="to" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+            </div>
+          </div>
+          <div className="field">
+            <label htmlFor="exercise">Exercise</label>
+            <select id="exercise" value={exerciseFilter} onChange={(e) => setExerciseFilter(e.target.value)}>
+              <option value="">All exercises</option>
+              {exerciseOptions.map((n) => (
+                <option key={n} value={n}>
                   {n}
-                </span>
+                </option>
               ))}
-            </div>
-          </Link>
-        ))}
+            </select>
+          </div>
+          {activeFilters > 0 && (
+            <button
+              type="button"
+              className="ghost sm"
+              style={{ justifySelf: "start" }}
+              onClick={() => {
+                setFrom("");
+                setTo("");
+                setExerciseFilter("");
+                setTypeFilter("");
+              }}
+            >
+              Clear filters
+            </button>
+          )}
+        </Disclosure>
       </div>
+
+      {loadError && <p className="error-text">{loadError}</p>}
+      {loading && <p className="muted">Loading…</p>}
+      {!loading && workouts.length === 0 && (
+        <div className="empty-state">
+          <span className="emoji">🏋️</span>
+          <p>No workouts yet.</p>
+          <Link to="/workouts/new" className="btn primary">
+            Log your first one
+          </Link>
+        </div>
+      )}
+      {!loading && workouts.length > 0 && filtered.length === 0 && (
+        <div className="empty-state">No workouts match these filters.</div>
+      )}
+
+      {byMonth.map((g) => (
+        <section key={g.label} style={{ marginBottom: 20 }}>
+          <p className="eyebrow" style={{ margin: "0 4px 8px" }}>
+            {g.label} · {g.items.length}
+          </p>
+          <div className="card-list">
+            {g.items.map((w) => (
+              <WorkoutCard key={w.id} w={w} />
+            ))}
+          </div>
+        </section>
+      ))}
     </div>
   );
 }

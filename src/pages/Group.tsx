@@ -19,6 +19,7 @@ import { isBetterSet, type BestSetCandidate } from "../lib/personalBest";
 import { computeStreak } from "../lib/streak";
 import MuscleMap from "../components/MuscleMap";
 import ContributionGraph from "../components/ContributionGraph";
+import GroupPlaylist from "../components/GroupPlaylist";
 import { MUSCLE_LABELS, type Muscle } from "../constants/muscles";
 
 // Categorical palette — distinguishable in both light and dark, consistent
@@ -53,7 +54,10 @@ interface WeightLog {
 }
 
 function isoWeekLabel(dateStr: string): string {
-  const d = new Date(dateStr + "T00:00:00");
+  // Parsed as UTC on purpose (the getUTC*/setUTC* calls below): a local
+  // "T00:00:00" east of UTC is still the previous day in UTC, which pushed
+  // every Monday into the week before.
+  const d = new Date(dateStr + "T00:00:00Z");
   const day = (d.getUTCDay() + 6) % 7; // Monday = 0
   d.setUTCDate(d.getUTCDate() - day);
   return d.toISOString().slice(0, 10);
@@ -451,20 +455,30 @@ export default function Group() {
   if (loading) return <p className="muted">Loading…</p>;
   if (enrichedAll.length === 0 && weightLogs.length === 0 && allWorkouts.length === 0)
     return (
-      <p className="muted">
-        Nothing to compare yet — either no workouts/weight logged, or you're not connected with anyone. Head
-        to <Link to="/connections">Connections</Link> to request access to a friend's data.
-      </p>
+      <div className="stack" style={{ gap: 16 }}>
+        <h1>Group</h1>
+        <div className="empty-state">
+          <span className="emoji">👥</span>
+          Nothing to compare yet — either no workouts/weight logged, or you're not connected with anyone. Head
+          to <Link to="/connections">Friends</Link> to connect with someone.
+        </div>
+        <GroupPlaylist />
+      </div>
     );
 
   return (
     <div className="stack" style={{ gap: 16 }}>
-      <h1>Group</h1>
+      <div className="page-header" style={{ marginBottom: 0 }}>
+        <div>
+          <h1>Group</h1>
+          <p className="sub">How the crew is training</p>
+        </div>
+      </div>
 
       {allUserNames.length > 0 && (
         <div className="panel">
           <div className="row between">
-            <h3 style={{ margin: 0 }}>Show</h3>
+            <h3 style={{ margin: 0 }}>Who to show</h3>
             {hiddenNames.size > 0 && (
               <button type="button" className="ghost" onClick={() => setHiddenNames(new Set())}>
                 Show everyone
@@ -475,39 +489,24 @@ export default function Group() {
             {allUserNames.map((name) => {
               const visible = !hiddenNames.has(name);
               return (
-                <label
+                <button
                   key={name}
-                  className="chip"
-                  style={{
-                    cursor: "pointer",
-                    opacity: visible ? 1 : 0.4,
-                    borderColor: visible ? colorFor(name) : undefined,
-                    color: visible ? colorFor(name) : undefined,
-                  }}
+                  type="button"
+                  className="toggle-chip"
+                  aria-pressed={visible}
+                  onClick={() => toggleVisible(name)}
+                  style={{ opacity: visible ? 1 : 0.5, paddingLeft: 12, borderColor: visible ? colorFor(name) : undefined }}
                 >
-                  <input
-                    type="checkbox"
-                    style={{ width: "auto", marginRight: 6 }}
-                    checked={visible}
-                    onChange={() => toggleVisible(name)}
-                  />
-                  <span
-                    style={{
-                      display: "inline-block",
-                      width: 8,
-                      height: 8,
-                      borderRadius: "50%",
-                      background: colorFor(name),
-                      marginRight: 6,
-                    }}
-                  />
+                  <span style={{ width: 9, height: 9, borderRadius: "50%", background: colorFor(name), flex: "none" }} />
                   {name}
-                </label>
+                </button>
               );
             })}
           </div>
         </div>
       )}
+
+      <GroupPlaylist />
 
       {visibleNames.length === 0 ? (
         <p className="muted">Everyone's hidden — check a friend above to see their data.</p>

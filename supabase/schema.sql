@@ -116,11 +116,18 @@ create table public.workouts (
   -- ties together every workout created in that one submit so they can be
   -- found and cross-linked. Both are null for an ordinary solo workout.
   logged_by_id      uuid references public.profiles(id) on delete set null default auth.uid(),
-  session_group_id  uuid
+  session_group_id  uuid,
+
+  -- "Best song" of the session (optional) -- feeds the group playlist on
+  -- the Group page. See migration 011_workout_song.sql.
+  song_title        text check (song_title is null or char_length(song_title) <= 200),
+  song_artist       text check (song_artist is null or char_length(song_artist) <= 200),
+  song_url          text check (song_url is null or char_length(song_url) <= 500)
 );
 
 create index workouts_user_date_idx on public.workouts (user_id, date desc);
 create index workouts_session_group_idx on public.workouts (session_group_id) where session_group_id is not null;
+create index workouts_song_idx on public.workouts (date desc) where song_title is not null;
 
 -- ============================================================================
 -- sets — one row per working set within a strength workout.

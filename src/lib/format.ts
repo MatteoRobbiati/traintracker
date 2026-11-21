@@ -27,7 +27,10 @@ export function relativeTime(iso: string): string {
 }
 
 export function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, {
+  // A bare "YYYY-MM-DD" is parsed as UTC midnight by Date, which shows up as
+  // the previous day anywhere west of UTC -- read it as a local date instead.
+  const d = new Date(iso.length === 10 ? `${iso}T00:00:00` : iso);
+  return d.toLocaleDateString(undefined, {
     year: "numeric",
     month: "short",
     day: "numeric",
@@ -78,4 +81,24 @@ export function setVolume(params: {
 }): number {
   const { equipment, weight, reps, bodyWeightKg } = params;
   return effectiveWeight(equipment, weight, bodyWeightKg) * reps;
+}
+
+/** Today's date as YYYY-MM-DD in the *local* timezone. `toISOString()` is
+ * UTC, which right after midnight (CET/CEST) still says yesterday. */
+export function todayLocalIso(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** "Mon 17 Nov" -- compact, for cards and hints. Date-only strings are read
+ * as local dates, so they never shift by a day. */
+export function formatShortDate(isoDate: string): string {
+  const d = new Date(isoDate.length === 10 ? `${isoDate}T00:00:00` : isoDate);
+  return d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+}
+
+/** "60 kg" / "60.5 kg", trimming a pointless ".0". */
+export function formatKg(kg: number): string {
+  return `${Number.isInteger(kg) ? kg : kg.toFixed(1)} kg`;
 }

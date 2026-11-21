@@ -60,6 +60,11 @@ export type Workout = {
   // workout.
   logged_by_id: string | null;
   session_group_id: string | null;
+  // Best song of the session -- see migration 011_workout_song.sql. All
+  // optional; feeds the group playlist (src/components/GroupPlaylist.tsx).
+  song_title: string | null;
+  song_artist: string | null;
+  song_url: string | null;
 };
 
 export type EnduranceDiscipline = "boulder" | "rope" | "both";
