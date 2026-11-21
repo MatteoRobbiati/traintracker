@@ -35,6 +35,11 @@ export interface WorkoutDraft {
   discipline: string;
   distanceKm: string;
   sessionDetail: string;
+  /** Best song of the session. Optional so drafts saved before this field
+   * existed still load. */
+  songTitle?: string;
+  songArtist?: string;
+  songUrl?: string;
   /** ISO timestamp of the last autosave, for the "continue filling" banner. */
   savedAt: string;
 }
@@ -43,9 +48,15 @@ const DRAFT_KEY = "traintrack:workout-draft";
 
 /** Whether a draft actually has something worth surfacing/restoring, as
  * opposed to a pristine blank form that happened to autosave once. */
-export function draftHasContent(draft: Pick<WorkoutDraft, "blocks" | "cardioBlocks" | "warmup" | "notes" | "duration" | "sessionDetail" | "distanceKm" | "customSport">): boolean {
+export function draftHasContent(
+  draft: Pick<
+    WorkoutDraft,
+    "blocks" | "cardioBlocks" | "warmup" | "notes" | "duration" | "sessionDetail" | "distanceKm" | "customSport" | "songTitle"
+  >
+): boolean {
   return (
-    draft.blocks.some((b) => b.sets.some((s) => s.reps.trim() !== "" || Number(s.weight) !== 0)) ||
+    draft.blocks.length > 0 ||
+    (draft.songTitle ?? "").trim() !== "" ||
     draft.cardioBlocks.length > 0 ||
     draft.warmup.trim() !== "" ||
     draft.notes.trim() !== "" ||

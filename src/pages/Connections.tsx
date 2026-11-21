@@ -30,7 +30,7 @@ export default function Connections() {
 
   return (
     <div>
-      <h1>Connections</h1>
+      <h1>Friends</h1>
       <p className="muted" style={{ marginBottom: 16 }}>
         Everyone's name is visible, but workouts and body weight stay private until you two connect —
         request access below, or accept a request someone sent you. You can also do this from the chat

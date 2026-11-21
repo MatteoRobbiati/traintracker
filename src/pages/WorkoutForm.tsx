@@ -1,8 +1,8 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
 import { useAuth } from "../context/AuthContext";
-import { setVolume, type Equipment } from "../lib/format";
+import { setVolume, todayLocalIso, formatShortDate, type Equipment } from "../lib/format";
 import { SPORTS, SPORT_LABELS, CLIMBING_DISCIPLINES, CLIMBING_DISCIPLINE_LABELS } from "../constants/sports";
 import {
   CARDIO_ACTIVITIES,
@@ -14,8 +14,23 @@ import {
 } from "../constants/cardio";
 import { saveWorkoutAsTemplate } from "../lib/templates";
 import { loadDraft, saveDraft, clearDraft, draftHasContent } from "../lib/workoutDraft";
-import SearchableSelect from "../components/SearchableSelect";
+import { fetchLastSession, fetchLastWeightsByExercise, fetchRecentExerciseIds } from "../lib/lastSets";
+import { parseSongUrl, safeUrl } from "../lib/songs";
+import ExercisePicker from "../components/ExercisePicker";
+import Avatar from "../components/Avatar";
+import Disclosure from "../components/Disclosure";
 import { useConnections } from "../hooks/useConnections";
+import {
+  ArrowDownIcon,
+  ArrowUpIcon,
+  CheckIcon,
+  CloseIcon,
+  MusicIcon,
+  PlusIcon,
+  TimerIcon,
+  TrashIcon,
+  ChevronDownIcon,
+} from "../components/icons";
 import type { WorkoutTemplate, WorkoutType } from "../types/database";
 
 interface ExerciseOption {
@@ -46,6 +61,11 @@ interface ExerciseBlock {
   key: string;
   exerciseId: string;
   sets: SetRow[];
+  /** Date of the session the default sets were copied from, for the
+   * "Last time" hint. Not persisted in the draft. */
+  lastDate?: string | null;
+  /** True while the last session's sets are being fetched. */
+  loadingLast?: boolean;
 }
 
 interface CardioBlockDraft {
@@ -58,7 +78,7 @@ interface CardioBlockDraft {
 }
 
 function emptySet(): SetRow {
-  return { weight: "0", reps: "", restSeconds: "" };
+  return { weight: "", reps: "", restSeconds: "" };
 }
 
 function emptyCardioBlock(purpose: CardioPurpose = "warmup"): CardioBlockDraft {
@@ -72,56 +92,30 @@ function formatElapsed(startedAt: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-// Prefills a newly added block from the sets logged last time this user did
-// this exercise, so re-adding "Bench Press" starts from what was actually
-// lifted last time instead of blank fields.
-async function fetchLastSets(userId: string, exerciseId: string): Promise<SetRow[]> {
-  const { data } = await supabase
-    .from("sets")
-    .select("workout_id, weight, reps, rest_time_seconds, set_order, workout:workouts!inner(date, user_id)")
-    .eq("exercise_id", exerciseId)
-    .eq("workout.user_id", userId)
-    .order("date", { foreignTable: "workout", ascending: false })
-    .order("set_order", { ascending: true })
-    .limit(30);
-
-  if (!data || data.length === 0) return [emptySet()];
-  const latestWorkoutId = (data[0] as any).workout_id;
-  const rows = (data as any[]).filter((r) => r.workout_id === latestWorkoutId);
-  return rows.map((r) => ({
-    weight: String(r.weight),
-    reps: String(r.reps),
-    restSeconds: r.rest_time_seconds != null ? String(r.rest_time_seconds) : "",
-  }));
+/** Rows in set_order -> blocks, grouping consecutive same-exercise sets
+ * (that's how they're laid out on save). */
+function rowsToBlocks(
+  rows: { exercise_id: string; weight: number; reps: number; rest_time_seconds: number | null }[]
+): ExerciseBlock[] {
+  const blocks: ExerciseBlock[] = [];
+  for (const row of rows) {
+    const last = blocks[blocks.length - 1];
+    const set: SetRow = {
+      weight: String(row.weight),
+      reps: String(row.reps),
+      restSeconds: row.rest_time_seconds != null ? String(row.rest_time_seconds) : "",
+    };
+    if (last && last.exerciseId === row.exercise_id) last.sets.push(set);
+    else blocks.push({ key: crypto.randomUUID(), exerciseId: row.exercise_id, sets: [set] });
+  }
+  return blocks;
 }
 
-// For "Training with" (see handleSubmit): each tagged partner's copy of the
-// workout uses their own last known weight per exercise, not yours. Batched
-// across every exercise in the workout in one query, same "latest workout
-// per exercise" logic as fetchLastSets above.
-async function fetchPartnerWeightsByExercise(
-  partnerId: string,
-  exerciseIds: string[]
-): Promise<Record<string, number[]>> {
-  if (exerciseIds.length === 0) return {};
-  const { data } = await supabase
-    .from("sets")
-    .select("exercise_id, workout_id, weight, set_order, workout:workouts!inner(date, user_id)")
-    .in("exercise_id", exerciseIds)
-    .eq("workout.user_id", partnerId)
-    .order("date", { foreignTable: "workout", ascending: false })
-    .order("set_order", { ascending: true })
-    .limit(300);
-
-  const result: Record<string, number[]> = {};
-  if (!data) return result;
-  const latestWorkoutByExercise = new Map<string, string>();
-  for (const r of data as any[]) {
-    if (!latestWorkoutByExercise.has(r.exercise_id)) latestWorkoutByExercise.set(r.exercise_id, r.workout_id);
-    if (r.workout_id !== latestWorkoutByExercise.get(r.exercise_id)) continue;
-    (result[r.exercise_id] ??= []).push(Number(r.weight));
-  }
-  return result;
+function weightLabel(equipment: Equipment): string {
+  if (equipment.isBodyweight) return "+kg";
+  if (equipment.isDumbbell) return "kg ea.";
+  if (equipment.barWeightKg != null) return "+kg";
+  return "kg";
 }
 
 const OTHER_SPORT = "other";
@@ -129,36 +123,43 @@ const OTHER_SPORT = "other";
 export default function WorkoutForm() {
   const { id } = useParams();
   const isEdit = Boolean(id);
+  const [searchParams] = useSearchParams();
+  // "Do it again" from a past workout (yours or a friend's): /workouts/new?from=<id>
+  const repeatFromId = !isEdit ? searchParams.get("from") : null;
   const { user } = useAuth();
   const navigate = useNavigate();
 
   // Training partners: accepted connections you can tag as "training with"
-  // on a new workout (see the checklist further down + handleSubmit), so
-  // logging your session also logs a copy for them, using their own typical
-  // weight per exercise.
+  // on a new workout, so logging your session also logs a copy for them,
+  // using their own last weight per exercise.
   const { rows: connectionRows } = useConnections();
   const acceptedConnections = connectionRows.filter((r) => r.status === "accepted").map((r) => r.profile);
   const [partnerIds, setPartnerIds] = useState<string[]>([]);
 
   function togglePartner(partnerId: string) {
-    setPartnerIds((prev) =>
-      prev.includes(partnerId) ? prev.filter((id) => id !== partnerId) : [...prev, partnerId]
-    );
+    setPartnerIds((prev) => (prev.includes(partnerId) ? prev.filter((p) => p !== partnerId) : [...prev, partnerId]));
   }
 
   const [exerciseOptions, setExerciseOptions] = useState<ExerciseOption[]>([]);
+  const [recentExerciseIds, setRecentExerciseIds] = useState<string[]>([]);
   const [bodyWeightKg, setBodyWeightKg] = useState<number | null>(null);
 
   const [workoutType, setWorkoutType] = useState<WorkoutType>("strength");
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(todayLocalIso);
   const [warmup, setWarmup] = useState("");
   const [notes, setNotes] = useState("");
   const [duration, setDuration] = useState("");
   const [blocks, setBlocks] = useState<ExerciseBlock[]>([]);
-  // Cardio *within* a strength workout (warmup/cooldown on a
-  // treadmill/bike/elliptical, or a standalone finisher) -- distinct from
-  // picking "Endurance" as the whole workout's type.
   const [cardioBlocks, setCardioBlocks] = useState<CardioBlockDraft[]>([]);
+
+  // Best song of the session -- feeds the group playlist.
+  const [songTitle, setSongTitle] = useState("");
+  const [songArtist, setSongArtist] = useState("");
+  const [songUrl, setSongUrl] = useState("");
+  // When editing a workout that already had a song, clearing the fields
+  // must write nulls; otherwise song columns are left out of the payload
+  // entirely (so logging still works before migration 011 is applied).
+  const [hadSong, setHadSong] = useState(false);
 
   // Endurance-only fields
   const [sport, setSport] = useState<string>(SPORTS[0]);
@@ -169,12 +170,13 @@ export default function WorkoutForm() {
 
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [loading, setLoading] = useState(isEdit);
+  const [loading, setLoading] = useState(isEdit || !!repeatFromId);
 
-  // Rest timer: a literal stopwatch per exercise block, for use *during* the
-  // workout -- start it after finishing a set, stop it right before the
-  // next one. Stopping fills the just-finished set's rest field and adds
-  // the next set row in one go, instead of typing a number in after the fact.
+  // Exercise picker: adding a new block (key null) or swapping a block's exercise.
+  const [picker, setPicker] = useState<{ open: boolean; replaceKey: string | null }>({ open: false, replaceKey: null });
+  const closePicker = useCallback(() => setPicker({ open: false, replaceKey: null }), []);
+
+  // Rest timer per block: start after a set, stop right before the next one.
   const [restStart, setRestStart] = useState<Record<string, number>>({});
   const [, forceTick] = useState(0);
 
@@ -184,28 +186,19 @@ export default function WorkoutForm() {
     return () => clearInterval(interval);
   }, [restStart]);
 
-  // Templates: reusable session plans, private per user (see NOTICE-less
-  // RLS on workout_templates/template_sets -- not even shared with
-  // connections). Loaded once so the picker and "save as" can both use them.
+  // Templates (private per user).
   const [templates, setTemplates] = useState<WorkoutTemplate[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [loadingTemplate, setLoadingTemplate] = useState(false);
-  const [showSaveTemplate, setShowSaveTemplate] = useState(false);
   const [templateName, setTemplateName] = useState("");
   const [savingTemplate, setSavingTemplate] = useState(false);
   const [templateSaved, setTemplateSaved] = useState(false);
 
-  // Autosaved draft (localStorage, see src/lib/workoutDraft.ts) -- only for
-  // a new, not-yet-submitted workout. Editing an existing one is already
-  // backed by the database, so it doesn't touch this.
+  // Autosaved draft (localStorage) -- only for a new workout.
   const [draftRestoredAt, setDraftRestoredAt] = useState<string | null>(null);
 
-  // Restore on mount, before the user's typed anything -- silently, not a
-  // prompt, so reopening "Log a workout" after switching sections just
-  // picks up where you left off. The banner + "Discard" button (rendered
-  // near the top of the form) are the only visible sign it happened.
   useEffect(() => {
-    if (isEdit) return;
+    if (isEdit || repeatFromId) return;
     const draft = loadDraft();
     if (!draft || !draftHasContent(draft)) return;
     setWorkoutType(draft.workoutType);
@@ -229,15 +222,15 @@ export default function WorkoutForm() {
     setDiscipline(draft.discipline);
     setDistanceKm(draft.distanceKm);
     setSessionDetail(draft.sessionDetail);
+    setSongTitle(draft.songTitle ?? "");
+    setSongArtist(draft.songArtist ?? "");
+    setSongUrl(draft.songUrl ?? "");
     setDraftRestoredAt(draft.savedAt);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Autosave on every change. Clears instead of writing once the form is
-  // back to nothing worth keeping (e.g. after discarding), so an abandoned
-  // blank form doesn't leave a phantom "in progress" banner around.
   useEffect(() => {
-    if (isEdit) return;
+    if (isEdit || loading) return;
     const draft = {
       workoutType,
       date,
@@ -257,11 +250,15 @@ export default function WorkoutForm() {
       discipline,
       distanceKm,
       sessionDetail,
+      songTitle,
+      songArtist,
+      songUrl,
     };
     if (draftHasContent(draft)) saveDraft(draft);
     else clearDraft();
   }, [
     isEdit,
+    loading,
     workoutType,
     date,
     warmup,
@@ -274,13 +271,16 @@ export default function WorkoutForm() {
     discipline,
     distanceKm,
     sessionDetail,
+    songTitle,
+    songArtist,
+    songUrl,
   ]);
 
-  function discardDraft() {
+  function resetForm() {
     clearDraft();
     setDraftRestoredAt(null);
     setWorkoutType("strength");
-    setDate(new Date().toISOString().slice(0, 10));
+    setDate(todayLocalIso());
     setWarmup("");
     setNotes("");
     setDuration("");
@@ -291,6 +291,11 @@ export default function WorkoutForm() {
     setDiscipline("");
     setDistanceKm("");
     setSessionDetail("");
+    setSongTitle("");
+    setSongArtist("");
+    setSongUrl("");
+    setRestStart({});
+    setSelectedTemplateId("");
   }
 
   async function loadTemplateList(userId: string) {
@@ -317,66 +322,74 @@ export default function WorkoutForm() {
       .limit(1)
       .maybeSingle()
       .then(({ data }) => setBodyWeightKg(data?.weight_kg ?? null));
+    fetchRecentExerciseIds(user.id).then(setRecentExerciseIds);
     loadTemplateList(user.id);
   }, [user]);
 
-  // Load the existing workout (+ sets, or endurance details) when editing.
-  // Sets are reconstructed into "blocks" by grouping consecutive
-  // same-exercise sets in set_order (that's how they were laid out on save).
+  // Load an existing workout: for editing (id) or as the starting point of a
+  // new one ("Do it again", ?from=<id>).
   useEffect(() => {
-    if (!id) return;
+    const sourceId = id ?? repeatFromId;
+    if (!sourceId || !user) return;
+    let cancelled = false;
     async function load() {
-      const { data: w } = await supabase.from("workouts").select("*").eq("id", id!).single();
+      const { data: w } = await supabase.from("workouts").select("*").eq("id", sourceId!).maybeSingle();
+      if (cancelled) return;
       if (!w) {
         setLoading(false);
+        if (repeatFromId) setError("Couldn't find the workout to repeat.");
         return;
       }
-      setDate(w.date);
+      if (isEdit) {
+        setDate(w.date);
+        setNotes(w.notes ?? "");
+        setDuration(w.duration_minutes != null ? String(w.duration_minutes) : "");
+        setSongTitle(w.song_title ?? "");
+        setSongArtist(w.song_artist ?? "");
+        setSongUrl(w.song_url ?? "");
+        setHadSong(!!(w.song_title || w.song_artist || w.song_url));
+      }
       setWarmup(w.warmup ?? "");
-      setNotes(w.notes ?? "");
-      setDuration(w.duration_minutes != null ? String(w.duration_minutes) : "");
       setWorkoutType(w.workout_type);
 
       if (w.workout_type === "endurance") {
-        const { data: details } = await supabase
-          .from("endurance_details")
-          .select("*")
-          .eq("workout_id", id!)
-          .single();
+        const { data: details } = await supabase.from("endurance_details").select("*").eq("workout_id", sourceId!).maybeSingle();
         if (details) {
-          if ((SPORTS as readonly string[]).includes(details.sport)) {
-            setSport(details.sport);
-          } else {
+          if ((SPORTS as readonly string[]).includes(details.sport)) setSport(details.sport);
+          else {
             setSport(OTHER_SPORT);
             setCustomSport(details.sport);
           }
           setDiscipline(details.discipline ?? "");
           setDistanceKm(details.distance_km != null ? String(details.distance_km) : "");
-          setSessionDetail(details.session_detail ?? "");
+          if (isEdit) setSessionDetail(details.session_detail ?? "");
         }
       } else {
         const [{ data: s }, { data: cardio }] = await Promise.all([
-          supabase.from("sets").select("*").eq("workout_id", id!).order("set_order"),
-          supabase.from("cardio_blocks").select("*").eq("workout_id", id!).order("block_order"),
+          supabase.from("sets").select("*").eq("workout_id", sourceId!).order("set_order"),
+          supabase.from("cardio_blocks").select("*").eq("workout_id", sourceId!).order("block_order"),
         ]);
-        const loadedBlocks: ExerciseBlock[] = [];
-        for (const row of s ?? []) {
-          const last = loadedBlocks[loadedBlocks.length - 1];
-          const set: SetRow = {
-            weight: String(row.weight),
-            reps: String(row.reps),
-            restSeconds: row.rest_time_seconds != null ? String(row.rest_time_seconds) : "",
-          };
-          if (last && last.exerciseId === row.exercise_id) {
-            last.sets.push(set);
-          } else {
-            loadedBlocks.push({ key: crypto.randomUUID(), exerciseId: row.exercise_id, sets: [set] });
-          }
+        let loaded = rowsToBlocks(s ?? []);
+        // Repeating a friend's session: same exercises/reps, but your own
+        // weights from your last time on each exercise (theirs where you
+        // have none yet).
+        if (repeatFromId && w.user_id !== user!.id) {
+          const mine = await fetchLastWeightsByExercise(user!.id, [...new Set(loaded.map((b) => b.exerciseId))]);
+          loaded = loaded.map((b) => ({
+            ...b,
+            sets: b.sets.map((set, i) => {
+              const known = mine[b.exerciseId];
+              const weight = known?.[i] ?? known?.[known.length - 1];
+              return weight != null ? { ...set, weight: String(weight) } : set;
+            }),
+          }));
         }
-        setBlocks(loadedBlocks);
+        if (repeatFromId) loaded = loaded.map((b) => ({ ...b, sets: b.sets.map((set) => ({ ...set, restSeconds: "" })) }));
+        if (cancelled) return;
+        setBlocks(loaded);
         setCardioBlocks(
           (cardio ?? []).map((c) => ({
-            key: c.id,
+            key: crypto.randomUUID(),
             activity: c.activity as CardioActivity,
             purpose: c.purpose as CardioPurpose,
             durationMinutes: c.duration_minutes != null ? String(c.duration_minutes) : "",
@@ -385,20 +398,20 @@ export default function WorkoutForm() {
           }))
         );
       }
-      setLoading(false);
+      if (!cancelled) setLoading(false);
     }
     load();
-  }, [id]);
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, repeatFromId, user]);
 
-  // Loads a saved template into the current (unsaved) form -- everything
-  // except `date`, which stays at whatever the user already picked (usually
-  // today).
   async function applyTemplate(templateId: string) {
-    setSelectedTemplateId(templateId);
-    if (!templateId) return;
+    if (templateId === selectedTemplateId) return;
     const template = templates.find((t) => t.id === templateId);
     if (!template) return;
-
+    setSelectedTemplateId(templateId);
     setLoadingTemplate(true);
     setWorkoutType(template.workout_type);
     setWarmup(template.warmup ?? "");
@@ -407,9 +420,8 @@ export default function WorkoutForm() {
 
     if (template.workout_type === "endurance") {
       const sportValue = template.sport ?? "";
-      if ((SPORTS as readonly string[]).includes(sportValue)) {
-        setSport(sportValue);
-      } else {
+      if ((SPORTS as readonly string[]).includes(sportValue)) setSport(sportValue);
+      else {
         setSport(OTHER_SPORT);
         setCustomSport(sportValue);
       }
@@ -418,26 +430,8 @@ export default function WorkoutForm() {
       setSessionDetail(template.session_detail ?? "");
       setBlocks([]);
     } else {
-      const { data: s } = await supabase
-        .from("template_sets")
-        .select("*")
-        .eq("template_id", templateId)
-        .order("set_order");
-      const loadedBlocks: ExerciseBlock[] = [];
-      for (const row of s ?? []) {
-        const last = loadedBlocks[loadedBlocks.length - 1];
-        const set: SetRow = {
-          weight: String(row.weight),
-          reps: String(row.reps),
-          restSeconds: row.rest_time_seconds != null ? String(row.rest_time_seconds) : "",
-        };
-        if (last && last.exerciseId === row.exercise_id) {
-          last.sets.push(set);
-        } else {
-          loadedBlocks.push({ key: crypto.randomUUID(), exerciseId: row.exercise_id, sets: [set] });
-        }
-      }
-      setBlocks(loadedBlocks);
+      const { data: s } = await supabase.from("template_sets").select("*").eq("template_id", templateId).order("set_order");
+      setBlocks(rowsToBlocks(s ?? []));
     }
     setLoadingTemplate(false);
   }
@@ -485,32 +479,70 @@ export default function WorkoutForm() {
       setError(saveError);
       return;
     }
-    setShowSaveTemplate(false);
     setTemplateName("");
     setTemplateSaved(true);
     setTimeout(() => setTemplateSaved(false), 3000);
     await loadTemplateList(user.id);
   }
 
-  async function addBlock() {
-    if (exerciseOptions.length === 0 || !user) return;
-    const exerciseId = exerciseOptions[0].id;
-    const key = crypto.randomUUID();
-    setBlocks((prev) => [...prev, { key, exerciseId, sets: [emptySet()] }]);
-    const sets = await fetchLastSets(user.id, exerciseId);
-    setBlocks((prev) => prev.map((b) => (b.key === key ? { ...b, sets } : b)));
+  /** Default sets for a block = exactly what was done the last time on that
+   * exercise (not the personal best). Only applied if the block still holds
+   * the same exercise when the answer arrives -- picking quickly no longer
+   * lets an older request overwrite a newer one. */
+  async function prefillFromLastSession(key: string, exerciseId: string) {
+    if (!user) return;
+    const last = await fetchLastSession(user.id, exerciseId, id);
+    setBlocks((prev) =>
+      prev.map((b) => {
+        if (b.key !== key || b.exerciseId !== exerciseId) return b;
+        if (!last || last.sets.length === 0) return { ...b, loadingLast: false, lastDate: null };
+        return {
+          ...b,
+          loadingLast: false,
+          lastDate: last.date,
+          sets: last.sets.map((s) => ({ weight: String(s.weight), reps: String(s.reps), restSeconds: "" })),
+        };
+      })
+    );
   }
 
-  async function updateBlock(key: string, exerciseId: string) {
-    setBlocks((prev) => prev.map((b) => (b.key === key ? { ...b, exerciseId } : b)));
-    if (!user) return;
-    const sets = await fetchLastSets(user.id, exerciseId);
-    setBlocks((prev) => prev.map((b) => (b.key === key ? { ...b, sets } : b)));
+  function handlePick(exerciseId: string) {
+    const replaceKey = picker.replaceKey;
+    closePicker();
+    if (replaceKey) {
+      const current = blocks.find((b) => b.key === replaceKey);
+      if (!current || current.exerciseId === exerciseId) return;
+      setBlocks((prev) =>
+        prev.map((b) => (b.key === replaceKey ? { ...b, exerciseId, sets: [emptySet()], loadingLast: true, lastDate: undefined } : b))
+      );
+      cancelRest(replaceKey);
+      prefillFromLastSession(replaceKey, exerciseId);
+    } else {
+      const key = crypto.randomUUID();
+      setBlocks((prev) => [...prev, { key, exerciseId, sets: [emptySet()], loadingLast: true }]);
+      prefillFromLastSession(key, exerciseId);
+      // Bring the new block into view on a phone.
+      setTimeout(() => document.getElementById(`block-${key}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 80);
+    }
   }
 
   function removeBlock(key: string) {
+    const block = blocks.find((b) => b.key === key);
+    const hasData = block?.sets.some((s) => s.reps.trim() !== "");
+    if (hasData && !confirm("Remove this exercise and its sets?")) return;
     setBlocks((prev) => prev.filter((b) => b.key !== key));
     cancelRest(key);
+  }
+
+  function moveBlock(key: string, delta: -1 | 1) {
+    setBlocks((prev) => {
+      const i = prev.findIndex((b) => b.key === key);
+      const j = i + delta;
+      if (i < 0 || j < 0 || j >= prev.length) return prev;
+      const next = [...prev];
+      [next[i], next[j]] = [next[j], next[i]];
+      return next;
+    });
   }
 
   function addCardioBlock(purpose?: CardioPurpose) {
@@ -525,14 +557,14 @@ export default function WorkoutForm() {
     setCardioBlocks((prev) => prev.filter((c) => c.key !== key));
   }
 
-  // New set starts from the previous one's weight (reps/rest still blank) --
-  // most sets of a block are the same weight, so this saves retyping it.
+  // New set copies the previous one's weight *and* reps -- most sets of a
+  // block repeat, so usually there's nothing left to type.
   function addSet(key: string) {
     setBlocks((prev) =>
       prev.map((b) => {
         if (b.key !== key) return b;
         const previous = b.sets[b.sets.length - 1];
-        const next = previous ? { ...emptySet(), weight: previous.weight } : emptySet();
+        const next = previous ? { weight: previous.weight, reps: previous.reps, restSeconds: "" } : emptySet();
         return { ...b, sets: [...b.sets, next] };
       })
     );
@@ -544,14 +576,13 @@ export default function WorkoutForm() {
 
   function cancelRest(key: string) {
     setRestStart((prev) => {
+      if (!(key in prev)) return prev;
       const next = { ...prev };
       delete next[key];
       return next;
     });
   }
 
-  /** Stops the timer, writes the elapsed seconds onto the set that was just
-   * finished (the last one), and adds a fresh set row for the next one. */
   function stopRestAndAddSet(key: string) {
     const startedAt = restStart[key];
     if (startedAt) {
@@ -571,22 +602,14 @@ export default function WorkoutForm() {
 
   function updateSet(key: string, index: number, patch: Partial<SetRow>) {
     setBlocks((prev) =>
-      prev.map((b) =>
-        b.key === key ? { ...b, sets: b.sets.map((s, i) => (i === index ? { ...s, ...patch } : s)) } : b
-      )
+      prev.map((b) => (b.key === key ? { ...b, sets: b.sets.map((s, i) => (i === index ? { ...s, ...patch } : s)) } : b))
     );
   }
 
   function removeSet(key: string, index: number) {
-    setBlocks((prev) =>
-      prev.map((b) => (b.key === key ? { ...b, sets: b.sets.filter((_, i) => i !== index) } : b))
-    );
+    setBlocks((prev) => prev.map((b) => (b.key === key ? { ...b, sets: b.sets.filter((_, i) => i !== index) } : b)));
   }
 
-  // Creates a training partner's copy of the workout being logged: same
-  // exercises/sets/reps/cardio (or same sport/distance for endurance), but
-  // each strength set's weight is the partner's own last known weight for
-  // that exercise -- falling back to what you logged, if they have none yet.
   async function logWorkoutForPartner(
     partnerId: string,
     sessionGroupId: string,
@@ -618,7 +641,7 @@ export default function WorkoutForm() {
     }
 
     const exerciseIds = [...new Set(blocks.map((b) => b.exerciseId))];
-    const partnerWeights = await fetchPartnerWeightsByExercise(partnerId, exerciseIds);
+    const partnerWeights = await fetchLastWeightsByExercise(partnerId, exerciseIds);
     const nextIndex: Record<string, number> = {};
     const setRows = blocks.flatMap((block, blockIndex) =>
       block.sets.map((s, setIndex) => {
@@ -653,9 +676,9 @@ export default function WorkoutForm() {
     return (setsError ?? cardioError)?.message ?? null;
   }
 
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
-    if (!user) return;
+  async function handleSubmit(e?: FormEvent) {
+    e?.preventDefault();
+    if (!user || submitting) return;
 
     const resolvedSport = sport === OTHER_SPORT ? customSport.trim() : sport;
     if (workoutType === "endurance" && !resolvedSport) {
@@ -664,6 +687,11 @@ export default function WorkoutForm() {
     }
     if (workoutType === "strength" && (blocks.length === 0 || blocks.every((b) => b.sets.length === 0))) {
       setError("Add at least one exercise with a set.");
+      return;
+    }
+    const trimmedUrl = songUrl.trim();
+    if (trimmedUrl && !safeUrl(trimmedUrl)) {
+      setError("The song link doesn't look like a valid URL (it should start with https://).");
       return;
     }
 
@@ -677,14 +705,23 @@ export default function WorkoutForm() {
       duration_minutes: duration ? Number(duration) : null,
       workout_type: workoutType,
     };
-    // Ties your workout together with each training partner's auto-created
-    // copy (see logWorkoutForPartner) so they can be found/cross-linked.
-    // Only set on a fresh, non-edit submit that actually tags someone.
+    const hasSong = !!(songTitle.trim() || songArtist.trim() || trimmedUrl);
+    const songPayload =
+      hasSong || hadSong
+        ? {
+            song_title: songTitle.trim() || (hasSong ? "Untitled" : null),
+            song_artist: songArtist.trim() || null,
+            song_url: trimmedUrl || null,
+          }
+        : {};
     const sessionGroupId = !isEdit && partnerIds.length > 0 ? crypto.randomUUID() : null;
 
     let workoutId = id;
     if (isEdit) {
-      const { error: updateError } = await supabase.from("workouts").update(workoutPayload).eq("id", id!);
+      const { error: updateError } = await supabase
+        .from("workouts")
+        .update({ ...workoutPayload, ...songPayload })
+        .eq("id", id!);
       if (updateError) {
         setError(updateError.message);
         setSubmitting(false);
@@ -693,7 +730,7 @@ export default function WorkoutForm() {
     } else {
       const { data: workout, error: workoutError } = await supabase
         .from("workouts")
-        .insert({ ...workoutPayload, user_id: user.id, session_group_id: sessionGroupId })
+        .insert({ ...workoutPayload, ...songPayload, user_id: user.id, session_group_id: sessionGroupId })
         .select()
         .single();
       if (workoutError || !workout) {
@@ -719,8 +756,6 @@ export default function WorkoutForm() {
       }
     } else {
       if (isEdit) {
-        // Simplest consistent way to persist edited sets/cardio: replace
-        // them all rather than diffing add/remove/reorder client-side.
         const [{ error: deleteError }, { error: deleteCardioError }] = await Promise.all([
           supabase.from("sets").delete().eq("workout_id", id!),
           supabase.from("cardio_blocks").delete().eq("workout_id", id!),
@@ -769,6 +804,7 @@ export default function WorkoutForm() {
       }
       if (partnerErrors.length > 0) {
         setSubmitting(false);
+        if (!isEdit) clearDraft();
         setError(`Saved your workout, but couldn't log it for everyone you trained with: ${partnerErrors.join("; ")}`);
         return;
       }
@@ -776,183 +812,360 @@ export default function WorkoutForm() {
 
     setSubmitting(false);
     if (!isEdit) clearDraft();
-    navigate(`/workouts/${workoutId}`);
+    navigate(`/workouts/${workoutId}`, { replace: true });
   }
+
+  const exerciseById = useMemo(() => new Map(exerciseOptions.map((e) => [e.id, e])), [exerciseOptions]);
+  const totalSets = blocks.reduce((n, b) => n + b.sets.length, 0);
+  const songLink = parseSongUrl(songUrl);
 
   if (loading) return <p className="muted">Loading…</p>;
 
+  const title = isEdit ? "Edit workout" : repeatFromId ? "Repeat workout" : "New workout";
+
   return (
     <div>
-      <h1>{isEdit ? "Edit workout" : "Log a workout"}</h1>
+      <div className="page-header">
+        <div>
+          <p className="eyebrow">{isEdit ? "Editing" : formatShortDate(date)}</p>
+          <h1>{title}</h1>
+        </div>
+        {!isEdit && (draftRestoredAt || blocks.length > 0) && (
+          <button type="button" className="ghost sm" onClick={() => confirm("Clear this workout and start over?") && resetForm()}>
+            Start over
+          </button>
+        )}
+      </div>
+
       {draftRestoredAt && (
-        <div className="panel" style={{ marginBottom: 16, borderColor: "var(--focus)" }}>
-          <div className="row between">
-            <span className="chip focus" style={{ whiteSpace: "normal" }}>
-              📝 Workout in progress — continuing where you left off
-            </span>
-            <button type="button" className="ghost" onClick={discardDraft}>
-              Discard draft
-            </button>
+        <div className="banner info">
+          <span style={{ fontSize: 20 }}>📝</span>
+          <div className="banner-body">
+            <p className="banner-title">Picking up where you left off</p>
+            <p className="small muted">Your unsaved workout was restored.</p>
           </div>
         </div>
       )}
-      <form className="form-grid panel" onSubmit={handleSubmit}>
-        {!isEdit && templates.length > 0 && (
-          <div className="field">
-            <label htmlFor="template">Start from a template</label>
-            <div className="row">
-              <select
-                id="template"
-                value={selectedTemplateId}
-                onChange={(e) => applyTemplate(e.target.value)}
-                disabled={loadingTemplate}
-              >
-                <option value="">— none —</option>
-                {templates.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-              </select>
-              {selectedTemplateId && (
-                <button type="button" className="ghost" onClick={() => deleteTemplate(selectedTemplateId)}>
-                  Delete template
-                </button>
+
+      <form className="form-grid" onSubmit={handleSubmit}>
+        {/* ---------- basics ---------- */}
+        <div className="panel form-grid" style={{ gap: 14 }}>
+          {!isEdit && (
+            <div className="segmented full" role="group" aria-label="Workout type">
+              <button type="button" aria-pressed={workoutType === "strength"} onClick={() => setWorkoutType("strength")}>
+                🏋️ Strength
+              </button>
+              <button type="button" aria-pressed={workoutType === "endurance"} onClick={() => setWorkoutType("endurance")}>
+                🏃 Endurance
+              </button>
+            </div>
+          )}
+
+          <div className="row nowrap" style={{ gap: 10 }}>
+            <div className="field grow">
+              <label htmlFor="date">Date</label>
+              <input id="date" type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
+            </div>
+            <div className="field" style={{ width: 120 }}>
+              <label htmlFor="duration">Minutes</label>
+              <input
+                id="duration"
+                type="number"
+                inputMode="numeric"
+                min={0}
+                placeholder="—"
+                value={duration}
+                onChange={(e) => setDuration(e.target.value)}
+              />
+            </div>
+          </div>
+
+          {!isEdit && acceptedConnections.length > 0 && (
+            <div className="field">
+              <span className="label">Training with</span>
+              <div className="row" style={{ gap: 8 }}>
+                {acceptedConnections.map((p) => {
+                  const on = partnerIds.includes(p.id);
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      className="toggle-chip"
+                      aria-pressed={on}
+                      onClick={() => togglePartner(p.id)}
+                    >
+                      <Avatar name={p.name} size={26} />
+                      {p.name}
+                      {on && <CheckIcon width={16} height={16} style={{ color: "var(--ember)" }} />}
+                    </button>
+                  );
+                })}
+              </div>
+              {partnerIds.length > 0 && (
+                <p className="muted tiny" style={{ margin: 0 }}>
+                  Also logs this session for them, with their own weights from last time. They can remove it from their log.
+                </p>
               )}
             </div>
-          </div>
-        )}
+          )}
 
-        {isEdit ? (
-          <span className="chip focus" style={{ width: "fit-content" }}>
-            {workoutType === "endurance" ? "Endurance" : "Strength"}
-          </span>
-        ) : (
-          <div className="field">
-            <label>Type</label>
-            <div className="row">
-              <button
-                type="button"
-                className={workoutType === "strength" ? "primary" : ""}
-                onClick={() => setWorkoutType("strength")}
-              >
-                Strength
-              </button>
-              <button
-                type="button"
-                className={workoutType === "endurance" ? "primary" : ""}
-                onClick={() => setWorkoutType("endurance")}
-              >
-                Endurance
-              </button>
-            </div>
-          </div>
-        )}
-
-        <div className="row">
-          <div className="field" style={{ minWidth: 160 }}>
-            <label htmlFor="date">Date</label>
-            <input id="date" type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
-          </div>
-          <div className="field" style={{ minWidth: 160 }}>
-            <label htmlFor="duration">Duration (min)</label>
-            <input
-              id="duration"
-              type="number"
-              inputMode="numeric"
-              min={0}
-              value={duration}
-              onChange={(e) => setDuration(e.target.value)}
-            />
-          </div>
-        </div>
-
-        {!isEdit && acceptedConnections.length > 0 && (
-          <div className="field">
-            <label>Training with</label>
-            <div className="row" style={{ gap: "6px 10px" }}>
-              {acceptedConnections.map((p) => {
-                const checked = partnerIds.includes(p.id);
-                return (
-                  <label
-                    key={p.id}
-                    className="chip"
-                    style={{
-                      cursor: "pointer",
-                      background: checked ? "var(--ember-muted)" : undefined,
-                      borderColor: checked ? "var(--ember)" : undefined,
-                    }}
+          {!isEdit && !repeatFromId && templates.length > 0 && (
+            <div className="field">
+              <span className="label">Start from a template</span>
+              <div className="row" style={{ gap: 8 }}>
+                {templates.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    className="toggle-chip"
+                    style={{ paddingLeft: 14 }}
+                    aria-pressed={selectedTemplateId === t.id}
+                    disabled={loadingTemplate}
+                    onClick={() => applyTemplate(t.id)}
                   >
-                    <input
-                      type="checkbox"
-                      style={{ width: "auto", marginRight: 6 }}
-                      checked={checked}
-                      onChange={() => togglePartner(p.id)}
-                    />
-                    {p.name}
-                  </label>
-                );
-              })}
+                    {t.name}
+                  </button>
+                ))}
+              </div>
             </div>
-            {partnerIds.length > 0 && (
-              <p className="muted" style={{ fontSize: 12, marginTop: 4 }}>
-                Also logs this workout for whoever's checked, using their own typical weight per exercise (falling
-                back to yours where they have no history).
-              </p>
-            )}
-          </div>
-        )}
+          )}
+        </div>
 
         {workoutType === "strength" ? (
           <>
-            <div className="field">
-              <label htmlFor="warmup">Warmup</label>
-              <textarea id="warmup" rows={2} value={warmup} onChange={(e) => setWarmup(e.target.value)} />
-            </div>
-
-            <div>
-              <h3>Cardio</h3>
-              <p className="muted" style={{ fontSize: 12, marginTop: -6, marginBottom: 12 }}>
-                Warmup, cooldown, or a standalone finisher — separate from picking "Endurance" as the whole
-                workout's type.
-              </p>
-              <div className="stack" style={{ gap: 12 }}>
-                {cardioBlocks.map((c) => (
-                  <div key={c.key} className="panel">
-                    <div className="row between">
-                      <div className="row">
-                        <select
-                          value={c.activity}
-                          onChange={(e) => updateCardioBlock(c.key, { activity: e.target.value as CardioActivity })}
-                          style={{ width: "auto" }}
-                        >
-                          {CARDIO_ACTIVITIES.map((a) => (
-                            <option key={a} value={a}>
-                              {CARDIO_ACTIVITY_LABELS[a]}
-                            </option>
-                          ))}
-                        </select>
-                        <select
-                          value={c.purpose}
-                          onChange={(e) => updateCardioBlock(c.key, { purpose: e.target.value as CardioPurpose })}
-                          style={{ width: "auto" }}
-                        >
-                          {CARDIO_PURPOSES.map((p) => (
-                            <option key={p} value={p}>
-                              {CARDIO_PURPOSE_LABELS[p]}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <button type="button" className="ghost" onClick={() => removeCardioBlock(c.key)}>
-                        Remove
+            {/* ---------- exercises ---------- */}
+            <div className="stack" style={{ gap: 12 }}>
+              {blocks.map((block, blockIndex) => {
+                const exercise = exerciseById.get(block.exerciseId);
+                const equipment = equipmentOf(exercise);
+                const showVol = equipment.isBodyweight || equipment.isDumbbell || equipment.barWeightKg != null;
+                const running = restStart[block.key];
+                return (
+                  <div key={block.key} id={`block-${block.key}`} className="ex-block">
+                    <div className="ex-block-head">
+                      <span className="ex-num">{blockIndex + 1}</span>
+                      <button
+                        type="button"
+                        className="ex-name-btn"
+                        onClick={() => setPicker({ open: true, replaceKey: block.key })}
+                        aria-label="Change exercise"
+                      >
+                        <span>{exercise?.name ?? "Pick an exercise"}</span>
+                        <ChevronDownIcon width={16} height={16} style={{ flex: "none", opacity: 0.5 }} />
+                      </button>
+                      {blocks.length > 1 && (
+                        <>
+                          <button
+                            type="button"
+                            className="icon-btn sm"
+                            disabled={blockIndex === 0}
+                            onClick={() => moveBlock(block.key, -1)}
+                            aria-label="Move up"
+                          >
+                            <ArrowUpIcon width={18} height={18} />
+                          </button>
+                          <button
+                            type="button"
+                            className="icon-btn sm"
+                            disabled={blockIndex === blocks.length - 1}
+                            onClick={() => moveBlock(block.key, 1)}
+                            aria-label="Move down"
+                          >
+                            <ArrowDownIcon width={18} height={18} />
+                          </button>
+                        </>
+                      )}
+                      <button
+                        type="button"
+                        className="icon-btn sm danger-hover"
+                        onClick={() => removeBlock(block.key)}
+                        aria-label="Remove exercise"
+                      >
+                        <TrashIcon width={18} height={18} />
                       </button>
                     </div>
-                    <div className="row" style={{ marginTop: 10 }}>
-                      <div className="field" style={{ minWidth: 110 }}>
-                        <label htmlFor={`cardio-duration-${c.key}`}>Duration (min)</label>
+
+                    <div className="ex-hint">
+                      {block.loadingLast ? (
+                        <span>Loading last session…</span>
+                      ) : block.lastDate ? (
+                        <span>↺ Last time · {formatShortDate(block.lastDate)}</span>
+                      ) : block.lastDate === null ? (
+                        <span>First time on this one 💪</span>
+                      ) : null}
+                      {equipment.isDumbbell && <span>Per dumbbell · volume ×2</span>}
+                      {equipment.barWeightKg != null && <span>Added to a {equipment.barWeightKg} kg bar</span>}
+                      {equipment.isBodyweight && <span>Bodyweight + added kg</span>}
+                    </div>
+
+                    <div className="set-grid">
+                      <div className={`set-row head${showVol ? " has-vol" : ""}`}>
+                        <span>Set</span>
+                        <span>{weightLabel(equipment)}</span>
+                        <span>Reps</span>
+                        <span>Rest s</span>
+                        {showVol && <span style={{ textAlign: "right" }}>Vol</span>}
+                        <span />
+                      </div>
+                      {block.sets.map((s, i) => {
+                        const volume = setVolume({
+                          equipment,
+                          weight: Number(s.weight) || 0,
+                          reps: Number(s.reps) || 0,
+                          bodyWeightKg,
+                        });
+                        return (
+                          <div key={i} className={`set-row enter${showVol ? " has-vol" : ""}`}>
+                            <span className="set-idx">{i + 1}</span>
+                            <input
+                              type="number"
+                              inputMode="decimal"
+                              step="any"
+                              placeholder="0"
+                              aria-label={`Set ${i + 1} weight`}
+                              value={s.weight}
+                              onChange={(e) => updateSet(block.key, i, { weight: e.target.value })}
+                              onFocus={(e) => e.target.select()}
+                            />
+                            <input
+                              type="number"
+                              inputMode="numeric"
+                              min={0}
+                              placeholder="—"
+                              aria-label={`Set ${i + 1} reps`}
+                              value={s.reps}
+                              onChange={(e) => updateSet(block.key, i, { reps: e.target.value })}
+                              onFocus={(e) => e.target.select()}
+                            />
+                            <input
+                              type="number"
+                              inputMode="numeric"
+                              min={0}
+                              placeholder="—"
+                              aria-label={`Set ${i + 1} rest seconds`}
+                              value={s.restSeconds}
+                              onChange={(e) => updateSet(block.key, i, { restSeconds: e.target.value })}
+                              onFocus={(e) => e.target.select()}
+                            />
+                            {showVol && <span className="vol">{volume ? volume.toFixed(0) : "—"}</span>}
+                            <button
+                              type="button"
+                              className="icon-btn sm danger-hover"
+                              onClick={() => removeSet(block.key, i)}
+                              aria-label={`Remove set ${i + 1}`}
+                            >
+                              <CloseIcon width={16} height={16} />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="ex-block-foot">
+                      <button type="button" className="soft sm" onClick={() => addSet(block.key)}>
+                        <PlusIcon width={16} height={16} /> Set
+                      </button>
+                      {running ? (
+                        <>
+                          <span className="rest-pill">
+                            <span className="dot" />
+                            {formatElapsed(running)}
+                          </span>
+                          <button type="button" className="primary sm" onClick={() => stopRestAndAddSet(block.key)}>
+                            Next set
+                          </button>
+                          <button type="button" className="icon-btn sm" onClick={() => cancelRest(block.key)} aria-label="Cancel timer">
+                            <CloseIcon width={16} height={16} />
+                          </button>
+                        </>
+                      ) : (
+                        <button type="button" className="ghost sm" onClick={() => startRest(block.key)}>
+                          <TimerIcon width={16} height={16} /> Rest timer
+                        </button>
+                      )}
+                    </div>
+                    {exercise?.is_bodyweight && bodyWeightKg == null && (
+                      <p className="muted tiny" style={{ padding: "0 14px 12px", margin: 0 }}>
+                        Log your body weight in <Link to="/profile">Profile</Link> to get volume for bodyweight sets.
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+
+              {exerciseOptions.length === 0 ? (
+                <div className="empty-state">
+                  No exercises in the library yet — <Link to="/exercises/new">add one first</Link>.
+                </div>
+              ) : (
+                <button type="button" className="add-exercise-btn" onClick={() => setPicker({ open: true, replaceKey: null })}>
+                  <PlusIcon width={20} height={20} /> Add exercise
+                </button>
+              )}
+            </div>
+
+            {/* ---------- warmup & cardio ---------- */}
+            <Disclosure autoOpen={!!warmup || cardioBlocks.length > 0}
+              summary={
+                <>
+                🔥 Warm-up & cardio
+                {(warmup || cardioBlocks.length > 0) && (
+                  <span className="summary-hint">
+                    {cardioBlocks.length > 0 ? `${cardioBlocks.length} cardio block${cardioBlocks.length > 1 ? "s" : ""}` : "added"}
+                  </span>
+                )}
+                </>
+              }
+            >
+                <div className="field">
+                  <label htmlFor="warmup">Warm-up</label>
+                  <textarea
+                    id="warmup"
+                    rows={2}
+                    placeholder="Mobility, activation, ramp-up sets…"
+                    value={warmup}
+                    onChange={(e) => setWarmup(e.target.value)}
+                  />
+                </div>
+                {cardioBlocks.map((c) => (
+                  <div key={c.key} className="panel sunken" style={{ padding: 12 }}>
+                    <div className="row nowrap" style={{ gap: 8 }}>
+                      <select
+                        value={c.activity}
+                        onChange={(e) => updateCardioBlock(c.key, { activity: e.target.value as CardioActivity })}
+                        aria-label="Activity"
+                      >
+                        {CARDIO_ACTIVITIES.map((a) => (
+                          <option key={a} value={a}>
+                            {CARDIO_ACTIVITY_LABELS[a]}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        value={c.purpose}
+                        onChange={(e) => updateCardioBlock(c.key, { purpose: e.target.value as CardioPurpose })}
+                        aria-label="Purpose"
+                      >
+                        {CARDIO_PURPOSES.map((p) => (
+                          <option key={p} value={p}>
+                            {CARDIO_PURPOSE_LABELS[p]}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        className="icon-btn sm danger-hover"
+                        onClick={() => removeCardioBlock(c.key)}
+                        aria-label="Remove cardio"
+                      >
+                        <TrashIcon width={18} height={18} />
+                      </button>
+                    </div>
+                    <div className="row nowrap" style={{ marginTop: 10, gap: 8 }}>
+                      <div className="field grow">
+                        <label htmlFor={`cd-${c.key}`}>Min</label>
                         <input
-                          id={`cardio-duration-${c.key}`}
+                          id={`cd-${c.key}`}
                           type="number"
                           inputMode="numeric"
                           min={0}
@@ -960,10 +1173,10 @@ export default function WorkoutForm() {
                           onChange={(e) => updateCardioBlock(c.key, { durationMinutes: e.target.value })}
                         />
                       </div>
-                      <div className="field" style={{ minWidth: 110 }}>
-                        <label htmlFor={`cardio-incline-${c.key}`}>Incline (%)</label>
+                      <div className="field grow">
+                        <label htmlFor={`ci-${c.key}`}>Incline %</label>
                         <input
-                          id={`cardio-incline-${c.key}`}
+                          id={`ci-${c.key}`}
                           type="number"
                           inputMode="decimal"
                           min={0}
@@ -972,10 +1185,10 @@ export default function WorkoutForm() {
                           onChange={(e) => updateCardioBlock(c.key, { inclinePercent: e.target.value })}
                         />
                       </div>
-                      <div className="field" style={{ minWidth: 110 }}>
-                        <label htmlFor={`cardio-speed-${c.key}`}>Speed (km/h)</label>
+                      <div className="field grow">
+                        <label htmlFor={`cs-${c.key}`}>km/h</label>
                         <input
-                          id={`cardio-speed-${c.key}`}
+                          id={`cs-${c.key}`}
                           type="number"
                           inputMode="decimal"
                           min={0}
@@ -987,188 +1200,44 @@ export default function WorkoutForm() {
                     </div>
                   </div>
                 ))}
-              </div>
-              <div className="row" style={{ marginTop: 12, gap: 8 }}>
-                <button type="button" onClick={() => addCardioBlock("warmup")}>
-                  + Add warmup
-                </button>
-                <button type="button" onClick={() => addCardioBlock("cooldown")}>
-                  + Add cooldown
-                </button>
-              </div>
-            </div>
-
-            <div>
-              <h3>Exercises</h3>
-              {exerciseOptions.length === 0 && (
-                <p className="muted">No exercises in the library yet — add one first.</p>
-              )}
-
-              <div className="stack" style={{ gap: 16 }}>
-                {blocks.map((block) => {
-                  const exercise = exerciseOptions.find((e) => e.id === block.exerciseId);
-                  const equipment = equipmentOf(exercise);
-                  const showVolumeCol = equipment.isBodyweight || equipment.isDumbbell || equipment.barWeightKg != null;
-                  const weightHeader = equipment.isBodyweight
-                    ? "Added weight"
-                    : equipment.isDumbbell
-                      ? "Weight (per dumbbell)"
-                      : equipment.barWeightKg != null
-                        ? "Weight (added to bar)"
-                        : "Weight";
-                  return (
-                    <div key={block.key} className="panel">
-                      <div className="row between">
-                        <SearchableSelect
-                          options={exerciseOptions.map((e) => ({ id: e.id, label: e.name }))}
-                          value={block.exerciseId}
-                          onChange={(exerciseId) => updateBlock(block.key, exerciseId)}
-                          placeholder="Search exercises…"
-                        />
-                        <button type="button" className="ghost" onClick={() => removeBlock(block.key)}>
-                          Remove
-                        </button>
-                      </div>
-                      {equipment.isDumbbell && (
-                        <p className="muted" style={{ fontSize: 12, margin: "8px 0 0" }}>
-                          🏋️ Dumbbell — volume counts both (×2).
-                        </p>
-                      )}
-                      {equipment.barWeightKg != null && (
-                        <p className="muted" style={{ fontSize: 12, margin: "8px 0 0" }}>
-                          🏋️ Barbell — +{equipment.barWeightKg} kg bar added on top.
-                        </p>
-                      )}
-
-                      <div className="table-scroll" style={{ marginTop: 10 }}>
-                      <table>
-                        <thead>
-                          <tr>
-                            <th>{weightHeader}</th>
-                            <th>Reps</th>
-                            <th>Rest (s)</th>
-                            {showVolumeCol && <th>Volume</th>}
-                            <th />
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {block.sets.map((s, i) => {
-                            const volume = setVolume({
-                              equipment,
-                              weight: Number(s.weight) || 0,
-                              reps: Number(s.reps) || 0,
-                              bodyWeightKg,
-                            });
-                            return (
-                              <tr key={i}>
-                                <td>
-                                  <input
-                                    type="number"
-                                    inputMode="decimal"
-                                    value={s.weight}
-                                    onChange={(e) => updateSet(block.key, i, { weight: e.target.value })}
-                                  />
-                                </td>
-                                <td>
-                                  <input
-                                    type="number"
-                                    inputMode="numeric"
-                                    min={0}
-                                    value={s.reps}
-                                    onChange={(e) => updateSet(block.key, i, { reps: e.target.value })}
-                                  />
-                                </td>
-                                <td>
-                                  <input
-                                    type="number"
-                                    inputMode="numeric"
-                                    min={0}
-                                    value={s.restSeconds}
-                                    onChange={(e) => updateSet(block.key, i, { restSeconds: e.target.value })}
-                                  />
-                                </td>
-                                {showVolumeCol && (
-                                  <td className="muted">{volume ? volume.toFixed(0) : "—"}</td>
-                                )}
-                                <td>
-                                  <button type="button" className="ghost" onClick={() => removeSet(block.key, i)}>
-                                    ✕
-                                  </button>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                      </div>
-                      <div className="row" style={{ marginTop: 6, gap: 8 }}>
-                        <button type="button" className="ghost" onClick={() => addSet(block.key)}>
-                          + Add set
-                        </button>
-                        {restStart[block.key] ? (
-                          <>
-                            <span className="chip focus">⏱ {formatElapsed(restStart[block.key])}</span>
-                            <button type="button" className="primary" onClick={() => stopRestAndAddSet(block.key)}>
-                              Stop &amp; next set
-                            </button>
-                            <button type="button" className="ghost" onClick={() => cancelRest(block.key)}>
-                              Cancel
-                            </button>
-                          </>
-                        ) : (
-                          <button type="button" className="ghost" onClick={() => startRest(block.key)}>
-                            ⏱ Start rest timer
-                          </button>
-                        )}
-                      </div>
-                      {exercise?.is_bodyweight && bodyWeightKg == null && (
-                        <p className="muted" style={{ fontSize: 12, marginTop: 6 }}>
-                          Log your body weight in Profile to compute volume for bodyweight sets.
-                        </p>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-
-              <button
-                type="button"
-                onClick={addBlock}
-                disabled={exerciseOptions.length === 0}
-                style={{ marginTop: 12 }}
-              >
-                + Add exercise
-              </button>
-            </div>
+                <div className="row" style={{ gap: 8 }}>
+                  <button type="button" className="sm" onClick={() => addCardioBlock("warmup")}>
+                    <PlusIcon width={16} height={16} /> Cardio warm-up
+                  </button>
+                  <button type="button" className="sm" onClick={() => addCardioBlock("cooldown")}>
+                    <PlusIcon width={16} height={16} /> Cool-down
+                  </button>
+                </div>
+            </Disclosure>
           </>
         ) : (
-          <>
-            <div className="row">
-              <div className="field" style={{ minWidth: 160 }}>
-                <label htmlFor="sport">Sport</label>
-                <select id="sport" value={sport} onChange={(e) => setSport(e.target.value)}>
-                  {SPORTS.map((s) => (
-                    <option key={s} value={s}>
-                      {SPORT_LABELS[s]}
-                    </option>
-                  ))}
-                  <option value={OTHER_SPORT}>Other…</option>
-                </select>
+          <div className="panel form-grid" style={{ gap: 14 }}>
+            <div className="field">
+              <label htmlFor="sport">Sport</label>
+              <select id="sport" value={sport} onChange={(e) => setSport(e.target.value)}>
+                {SPORTS.map((s) => (
+                  <option key={s} value={s}>
+                    {SPORT_LABELS[s]}
+                  </option>
+                ))}
+                <option value={OTHER_SPORT}>Other…</option>
+              </select>
+            </div>
+            {sport === OTHER_SPORT && (
+              <div className="field">
+                <label htmlFor="customSport">Sport name</label>
+                <input
+                  id="customSport"
+                  required
+                  value={customSport}
+                  onChange={(e) => setCustomSport(e.target.value)}
+                  placeholder="e.g. yoga"
+                />
               </div>
-              {sport === OTHER_SPORT && (
-                <div className="field" style={{ minWidth: 160 }}>
-                  <label htmlFor="customSport">Sport name</label>
-                  <input
-                    id="customSport"
-                    required
-                    value={customSport}
-                    onChange={(e) => setCustomSport(e.target.value)}
-                    placeholder="e.g. yoga"
-                  />
-                </div>
-              )}
+            )}
+            <div className="row nowrap" style={{ gap: 10 }}>
               {sport === "climbing" && (
-                <div className="field" style={{ minWidth: 160 }}>
+                <div className="field grow">
                   <label htmlFor="discipline">Discipline</label>
                   <select id="discipline" value={discipline} onChange={(e) => setDiscipline(e.target.value)}>
                     <option value="">—</option>
@@ -1180,7 +1249,7 @@ export default function WorkoutForm() {
                   </select>
                 </div>
               )}
-              <div className="field" style={{ minWidth: 140 }}>
+              <div className="field grow">
                 <label htmlFor="distance">Distance (km)</label>
                 <input
                   id="distance"
@@ -1188,16 +1257,14 @@ export default function WorkoutForm() {
                   inputMode="decimal"
                   min={0}
                   step="0.1"
+                  placeholder="—"
                   value={distanceKm}
                   onChange={(e) => setDistanceKm(e.target.value)}
                 />
               </div>
             </div>
-
             <div className="field">
-              <label htmlFor="sessionDetail">
-                {sport === "climbing" ? "Boulders / routes done" : "Session detail"}
-              </label>
+              <label htmlFor="sessionDetail">{sport === "climbing" ? "Boulders / routes done" : "Session detail"}</label>
               <textarea
                 id="sessionDetail"
                 rows={3}
@@ -1206,49 +1273,151 @@ export default function WorkoutForm() {
                 placeholder={sport === "climbing" ? "e.g. 3x V3, 1x V5, onsight" : "Splits, effort, route, etc."}
               />
             </div>
-          </>
+          </div>
         )}
 
-        <div className="field">
-          <label htmlFor="notes">{workoutType === "endurance" ? "General comment" : "Notes"}</label>
-          <textarea id="notes" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
-        </div>
-
-        <div className="field">
-          <label>Template</label>
-          {showSaveTemplate ? (
-            <div className="row">
+        {/* ---------- best song ---------- */}
+        <Disclosure autoOpen={!!songTitle}
+          summary={
+            <>
+            🎵 Best song
+            <span className="summary-hint">{songTitle ? songTitle : "the track that carried the session"}</span>
+            </>
+          }
+        >
+            <div className="row nowrap" style={{ gap: 10 }}>
+              <div className="field grow">
+                <label htmlFor="songTitle">Title</label>
+                <input
+                  id="songTitle"
+                  value={songTitle}
+                  maxLength={200}
+                  placeholder="e.g. Till I Collapse"
+                  onChange={(e) => setSongTitle(e.target.value)}
+                />
+              </div>
+              <div className="field grow">
+                <label htmlFor="songArtist">Artist</label>
+                <input
+                  id="songArtist"
+                  value={songArtist}
+                  maxLength={200}
+                  placeholder="e.g. Eminem"
+                  onChange={(e) => setSongArtist(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="field">
+              <label htmlFor="songUrl">Link (optional)</label>
               <input
-                autoFocus
+                id="songUrl"
+                type="url"
+                inputMode="url"
+                value={songUrl}
+                maxLength={500}
+                placeholder="Paste a Spotify or YouTube link"
+                onChange={(e) => setSongUrl(e.target.value)}
+              />
+              {songLink && songLink.provider !== "other" && (
+                <span className="chip primary" style={{ width: "fit-content" }}>
+                  <MusicIcon width={14} height={14} />
+                  {songLink.provider === "spotify" ? "Spotify" : songLink.provider === "youtube" ? "YouTube" : "Apple Music"} link
+                </span>
+              )}
+              <p className="muted tiny" style={{ margin: 0 }}>
+                Goes into the group playlist on the Group page.
+              </p>
+            </div>
+        </Disclosure>
+
+        {/* ---------- notes ---------- */}
+        <Disclosure autoOpen={!!notes}
+          summary={
+            <>
+            ✍️ {workoutType === "endurance" ? "Comment" : "Notes"}
+            {notes && <span className="summary-hint">{notes}</span>}
+            </>
+          }
+        >
+            <textarea
+              id="notes"
+              rows={3}
+              aria-label="Notes"
+              placeholder="How did it feel? Anything to remember next time?"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+            />
+        </Disclosure>
+
+        {/* ---------- template ---------- */}
+        <Disclosure
+          summary={
+            <>
+            📋 Template
+            <span className="summary-hint">save this plan for later</span>
+            </>
+          }
+        >
+            <div className="row nowrap" style={{ gap: 8 }}>
+              <input
                 value={templateName}
                 onChange={(e) => setTemplateName(e.target.value)}
-                placeholder="Template name"
-                style={{ maxWidth: 240 }}
+                placeholder="Template name, e.g. Push day"
+                aria-label="Template name"
               />
               <button type="button" onClick={saveAsTemplate} disabled={savingTemplate || !templateName.trim()}>
-                {savingTemplate ? "Saving…" : "Save"}
-              </button>
-              <button type="button" className="ghost" onClick={() => setShowSaveTemplate(false)}>
-                Cancel
+                {savingTemplate ? "Saving…" : templateSaved ? "Saved ✓" : "Save"}
               </button>
             </div>
-          ) : (
-            <div className="row">
-              <button type="button" className="ghost" onClick={() => setShowSaveTemplate(true)}>
-                Save as template
-              </button>
-              {templateSaved && <span className="muted">Saved.</span>}
-            </div>
-          )}
-        </div>
+            {templates.length > 0 && (
+              <div className="stack" style={{ gap: 2 }}>
+                <span className="muted tiny">Your templates</span>
+                {templates.map((t) => (
+                  <div key={t.id} className="row between nowrap">
+                    <span className="truncate">{t.name}</span>
+                    <button
+                      type="button"
+                      className="icon-btn sm danger-hover"
+                      onClick={() => deleteTemplate(t.id)}
+                      aria-label={`Delete template ${t.name}`}
+                    >
+                      <TrashIcon width={16} height={16} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+        </Disclosure>
 
         {error && <p className="error-text">{error}</p>}
-        <div className="row">
-          <button type="submit" className="primary" disabled={submitting}>
-            {submitting ? "Saving…" : isEdit ? "Save changes" : "Save workout"}
+
+        <div className="action-bar">
+          <div className="summary">
+            {workoutType === "strength" ? (
+              <>
+                <strong>{blocks.length}</strong> exercise{blocks.length === 1 ? "" : "s"} · <strong>{totalSets}</strong> set
+                {totalSets === 1 ? "" : "s"}
+              </>
+            ) : (
+              <strong>{sport === OTHER_SPORT ? customSport || "Endurance" : SPORT_LABELS[sport as keyof typeof SPORT_LABELS]}</strong>
+            )}
+            {partnerIds.length > 0 && <> · +{partnerIds.length}</>}
+          </div>
+          <button type="submit" className="primary lg" disabled={submitting}>
+            {submitting ? "Saving…" : isEdit ? "Save changes" : "Finish"}
           </button>
         </div>
       </form>
+
+      <ExercisePicker
+        open={picker.open}
+        exercises={exerciseOptions}
+        recentIds={recentExerciseIds}
+        inWorkoutIds={blocks.map((b) => b.exerciseId)}
+        title={picker.replaceKey ? "Change exercise" : "Add exercise"}
+        onPick={handlePick}
+        onClose={closePicker}
+      />
     </div>
   );
 }

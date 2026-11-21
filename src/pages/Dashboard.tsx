@@ -2,21 +2,18 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useOutletContext } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
 import { useAuth } from "../context/AuthContext";
-import { formatDate, relativeTime } from "../lib/format";
+import { relativeTime, todayLocalIso } from "../lib/format";
 import { SPORT_LABELS } from "../constants/sports";
 import { NEWS_ROOM } from "../constants/rooms";
 import { computeStreak } from "../lib/streak";
 import { loadDraft, draftHasContent } from "../lib/workoutDraft";
 import ContributionGraph from "../components/ContributionGraph";
+import WorkoutCard, { type WorkoutCardData } from "../components/WorkoutCard";
+import { ChevronRightIcon, CloseIcon, PlusIcon, RepeatIcon } from "../components/icons";
 import type { AppOutletContext } from "../App";
-import type { Workout } from "../types/database";
 
 function sportLabel(sport: string): string {
   return (SPORT_LABELS as Record<string, string>)[sport] ?? sport;
-}
-
-interface RecentWorkout extends Workout {
-  sport: string | null;
 }
 
 interface NewsMessage {
@@ -26,21 +23,31 @@ interface NewsMessage {
   senderName: string;
 }
 
-// Which "what's new" post someone has already dismissed, per browser --
-// dismissing doesn't need to be tracked server-side or sync across devices,
-// it's just "don't show me this exact one again here".
+// Which "what's new" post someone has already dismissed, per browser.
 const NEWS_SEEN_KEY = "traintrack:lastSeenNewsMessageId";
+
+function greeting(): string {
+  const h = new Date().getHours();
+  if (h < 5) return "Late session?";
+  if (h < 12) return "Good morning";
+  if (h < 18) return "Good afternoon";
+  return "Good evening";
+}
+
+function daysAgoIso(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
 
 export default function Dashboard() {
   const { profile, user } = useAuth();
   const { openChat } = useOutletContext<AppOutletContext>();
   const [latestNews, setLatestNews] = useState<NewsMessage | null>(null);
   const [newsDismissed, setNewsDismissed] = useState(true);
-  const [recentWorkouts, setRecentWorkouts] = useState<RecentWorkout[]>([]);
+  const [recentWorkouts, setRecentWorkouts] = useState<WorkoutCardData[]>([]);
   const [latestWeight, setLatestWeight] = useState<number | null>(null);
-  const [workoutCount, setWorkoutCount] = useState<number | null>(null);
-  // Lightweight full history (not just the 5 shown below), for the activity
-  // calendar and its click-to-see-that-day's-workouts detail.
   const [allWorkoutsLite, setAllWorkoutsLite] = useState<
     { id: string; date: string; durationMinutes: number | null; sport: string | null }[]
   >([]);
@@ -48,19 +55,11 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [hasDraft, setHasDraft] = useState(false);
 
-  // Checked once on mount -- WorkoutForm is the only thing that writes this,
-  // and it re-checks itself when you navigate there, so this doesn't need
-  // to react to anything after the initial paint.
   useEffect(() => {
     const draft = loadDraft();
     setHasDraft(!!draft && draftHasContent(draft));
   }, []);
 
-  // "What's new" banner: whatever was most recently posted in the News chat
-  // room (see constants/rooms.ts NEWS_ROOM) -- post an update there after
-  // shipping a feature/fix and it shows up here automatically. Dismissing
-  // just remembers that one message's id locally, so a genuinely new post
-  // still reopens the banner.
   useEffect(() => {
     supabase
       .from("messages")
@@ -78,12 +77,22 @@ export default function Dashboard() {
           senderName: (data as any).sender?.name ?? "Someone",
         };
         setLatestNews(news);
-        setNewsDismissed(localStorage.getItem(NEWS_SEEN_KEY) === news.id);
+        let seen: string | null = null;
+        try {
+          seen = localStorage.getItem(NEWS_SEEN_KEY);
+        } catch {
+          /* storage unavailable */
+        }
+        setNewsDismissed(seen === news.id);
       });
   }, []);
 
   function dismissNews() {
-    if (latestNews) localStorage.setItem(NEWS_SEEN_KEY, latestNews.id);
+    try {
+      if (latestNews) localStorage.setItem(NEWS_SEEN_KEY, latestNews.id);
+    } catch {
+      /* ignore */
+    }
     setNewsDismissed(true);
   }
 
@@ -92,13 +101,14 @@ export default function Dashboard() {
     let cancelled = false;
 
     async function load() {
-      const [{ data: workouts }, { data: weight }, { count }, { data: allWorkouts }] = await Promise.all([
+      const [{ data: workouts }, { data: weight }, { data: allWorkouts }] = await Promise.all([
         supabase
           .from("workouts")
-          .select("*, endurance_details(sport)")
+          .select("*, sets(set_order, exercise:exercises(name)), endurance_details(sport), logger:profiles!logged_by_id(name)")
           .eq("user_id", user!.id)
           .order("date", { ascending: false })
-          .limit(5),
+          .order("created_at", { ascending: false })
+          .limit(4),
         supabase
           .from("body_weight_logs")
           .select("weight_kg")
@@ -106,21 +116,30 @@ export default function Dashboard() {
           .order("recorded_at", { ascending: false })
           .limit(1)
           .maybeSingle(),
-        supabase
-          .from("workouts")
-          .select("*", { count: "exact", head: true })
-          .eq("user_id", user!.id),
-        supabase
-          .from("workouts")
-          .select("id, date, duration_minutes, endurance_details(sport)")
-          .eq("user_id", user!.id),
+        supabase.from("workouts").select("id, date, duration_minutes, endurance_details(sport)").eq("user_id", user!.id),
       ]);
       if (cancelled) return;
       setRecentWorkouts(
-        (workouts ?? []).map((w: any) => ({ ...w, sport: w.endurance_details?.sport ?? null }))
+        (workouts ?? []).map((w: any) => ({
+          id: w.id,
+          date: w.date,
+          workout_type: w.workout_type,
+          duration_minutes: w.duration_minutes,
+          sport: w.endurance_details?.sport ?? null,
+          exerciseNames: Array.from(
+            new Set(
+              [...(w.sets ?? [])]
+                .sort((a: any, b: any) => a.set_order - b.set_order)
+                .map((s: any) => s.exercise?.name)
+                .filter(Boolean)
+            )
+          ) as string[],
+          songTitle: w.song_title ?? null,
+          songArtist: w.song_artist ?? null,
+          loggedByName: w.logged_by_id && w.logged_by_id !== w.user_id ? (w.logger?.name ?? "a friend") : null,
+        }))
       );
       setLatestWeight(weight?.weight_kg ?? null);
-      setWorkoutCount(count ?? 0);
       const lite = (allWorkouts ?? []).map((w: any) => ({
         id: w.id,
         date: w.date,
@@ -142,43 +161,43 @@ export default function Dashboard() {
       allWorkoutsLite.map((w) => ({
         id: w.id,
         date: w.date,
-        label: w.sport
-          ? sportLabel(w.sport)
-          : `Strength${w.durationMinutes != null ? ` · ${w.durationMinutes} min` : ""}`,
+        label: w.sport ? sportLabel(w.sport) : `Strength${w.durationMinutes != null ? ` · ${w.durationMinutes} min` : ""}`,
       })),
     [allWorkoutsLite]
   );
 
+  const thisWeek = useMemo(() => {
+    const since = daysAgoIso(6);
+    return allWorkoutsLite.filter((w) => w.date >= since).length;
+  }, [allWorkoutsLite]);
+
+  const trainedToday = allWorkoutsLite.some((w) => w.date === todayLocalIso());
+  const lastWorkout = recentWorkouts[0];
+  const firstName = profile?.name?.split(" ")[0];
+
   return (
     <div>
-      <p className="eyebrow">Welcome back</p>
-      <h1>{profile?.name ?? "Dashboard"}</h1>
-
-      <div className="row" style={{ margin: "16px 0 24px" }}>
-        <Link to="/workouts/new">
-          <button type="button" className="primary">
-            + Log a workout
-          </button>
-        </Link>
-        <Link to="/exercises/new">
-          <button type="button">+ Add exercise</button>
-        </Link>
+      <div className="page-header">
+        <div>
+          <p className="eyebrow">{greeting()}</p>
+          <h1>{firstName ?? "Welcome"} 👋</h1>
+        </div>
       </div>
 
       {latestNews && !newsDismissed && (
-        <div className="panel" style={{ marginBottom: 20, borderColor: "var(--focus)" }}>
-          <div className="row between" style={{ alignItems: "flex-start" }}>
-            <div>
-              <p className="eyebrow" style={{ margin: "0 0 4px" }}>📣 What's new</p>
-              <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{latestNews.body}</p>
-              <p className="muted" style={{ fontSize: 12, margin: "4px 0 0" }}>
-                {latestNews.senderName} · {relativeTime(latestNews.created_at)}
-              </p>
-            </div>
-            <div className="row" style={{ gap: 6, flexShrink: 0 }}>
+        <div className="banner">
+          <span style={{ fontSize: 20 }}>📣</span>
+          <div className="banner-body">
+            <p className="banner-title">What's new</p>
+            <p className="small" style={{ whiteSpace: "pre-wrap" }}>
+              {latestNews.body}
+            </p>
+            <p className="muted tiny" style={{ marginTop: 4 }}>
+              {latestNews.senderName} · {relativeTime(latestNews.created_at)} ·{" "}
               <button
                 type="button"
-                className="ghost"
+                className="linklike"
+                style={{ padding: 0, color: "var(--ember)", fontSize: 12 }}
                 onClick={() => {
                   dismissNews();
                   openChat(NEWS_ROOM);
@@ -186,34 +205,62 @@ export default function Dashboard() {
               >
                 See all
               </button>
-              <button type="button" className="ghost" onClick={dismissNews} aria-label="Dismiss">
-                ✕
-              </button>
-            </div>
+            </p>
           </div>
+          <button type="button" className="icon-btn sm" onClick={dismissNews} aria-label="Dismiss">
+            <CloseIcon width={16} height={16} />
+          </button>
         </div>
       )}
 
-      {hasDraft && (
-        <Link to="/workouts/new" className="card-link" style={{ display: "block", marginBottom: 20 }}>
-          <div className="row between">
-            <span>
-              📝 <strong>Workout in progress</strong> — continue filling
-            </span>
-            <span className="muted">→</span>
+      {/* Primary action */}
+      <div className="stack" style={{ gap: 10, marginBottom: 20 }}>
+        <Link to="/workouts/new" className="btn primary lg block" style={{ padding: "18px 22px", fontSize: 16 }}>
+          <PlusIcon width={20} height={20} strokeWidth={2.4} />
+          {hasDraft ? "Continue your workout" : trainedToday ? "Log another workout" : "Start a workout"}
+        </Link>
+        {lastWorkout && !hasDraft && lastWorkout.workout_type === "strength" && (
+          <Link to={`/workouts/new?from=${lastWorkout.id}`} className="btn block">
+            <RepeatIcon width={16} height={16} /> Repeat last session
+            {lastWorkout.exerciseNames.length > 0 && (
+              <span className="muted truncate" style={{ fontWeight: 500, maxWidth: "50%" }}>
+                · {lastWorkout.exerciseNames.slice(0, 2).join(", ")}
+              </span>
+            )}
+          </Link>
+        )}
+      </div>
+
+      <div className="stat-grid" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))", marginBottom: 16 }}>
+        <div className="stat-card">
+          <p className="stat-label">Streak</p>
+          <div className="stat-value">
+            {streak.current}
+            <small>{streak.current > 0 ? "🔥" : "days"}</small>
+          </div>
+        </div>
+        <div className="stat-card">
+          <p className="stat-label">Last 7 days</p>
+          <div className="stat-value">{thisWeek}</div>
+        </div>
+        <Link to="/profile" className="stat-card">
+          <p className="stat-label">Weight</p>
+          <div className="stat-value">
+            {latestWeight != null ? latestWeight : "—"}
+            {latestWeight != null && <small>kg</small>}
           </div>
         </Link>
-      )}
+      </div>
 
-      <div className="panel" style={{ marginBottom: 20 }}>
+      <div className="panel" style={{ marginBottom: 8 }}>
         <div className="row between" style={{ marginBottom: 12 }}>
           <h3 style={{ margin: 0 }}>Activity</h3>
-          <span className="muted" style={{ fontSize: 12 }}>
-            {streak.current > 0 ? `🔥 ${streak.current}-day streak` : "No active streak"} · Best {streak.longest}
+          <span className="muted tiny">
+            Best streak {streak.longest} · {allWorkoutsLite.length} total
           </span>
         </div>
         <ContributionGraph workouts={graphWorkouts} />
-        <p className="muted" style={{ fontSize: 12, margin: "10px 0 0" }}>
+        <p className="muted tiny" style={{ margin: "10px 0 0" }}>
           {streak.current > 0
             ? streak.onRestDay
               ? "Resting today keeps the streak — train tomorrow to keep it going."
@@ -224,45 +271,25 @@ export default function Dashboard() {
         </p>
       </div>
 
-      <div className="row" style={{ gap: 12, marginBottom: 20 }}>
-        <div className="panel" style={{ flex: 1 }}>
-          <p className="eyebrow">Latest body weight</p>
-          <h2>{latestWeight != null ? `${latestWeight} kg` : "—"}</h2>
-          <Link to="/profile" className="muted">
-            Log weight →
-          </Link>
-        </div>
-        <div className="panel" style={{ flex: 1 }}>
-          <p className="eyebrow">Workouts logged</p>
-          <h2>{workoutCount ?? "—"}</h2>
-        </div>
-      </div>
-
-      <div className="panel">
-        <h3>Recent workouts</h3>
-        {loading && <p className="muted">Loading…</p>}
-        {!loading && recentWorkouts.length === 0 && (
-          <p className="muted">No workouts logged yet — get started above.</p>
-        )}
-        <div className="card-list">
-          {recentWorkouts.map((w) => (
-            <Link key={w.id} to={`/workouts/${w.id}`} className="card-link">
-              <div className="row between">
-                <strong>{w.sport ? sportLabel(w.sport) : formatDate(w.date)}</strong>
-                <div className="row" style={{ gap: 6 }}>
-                  {w.sport && <span className="chip">{formatDate(w.date)}</span>}
-                  {w.duration_minutes != null && <span className="chip">{w.duration_minutes} min</span>}
-                </div>
-              </div>
-              {w.notes && <p className="muted" style={{ margin: "4px 0 0" }}>{w.notes}</p>}
-            </Link>
-          ))}
-        </div>
+      <div className="section-title">
+        <h3>Recent</h3>
         {recentWorkouts.length > 0 && (
-          <p style={{ marginTop: 12 }}>
-            <Link to="/workouts">View all workouts →</Link>
-          </p>
+          <Link to="/workouts" className="small row nowrap" style={{ gap: 2 }}>
+            All workouts <ChevronRightIcon width={16} height={16} />
+          </Link>
         )}
+      </div>
+      {loading && <p className="muted">Loading…</p>}
+      {!loading && recentWorkouts.length === 0 && (
+        <div className="empty-state">
+          <span className="emoji">🏁</span>
+          No workouts yet — tap <strong>Start a workout</strong> above.
+        </div>
+      )}
+      <div className="card-list">
+        {recentWorkouts.map((w) => (
+          <WorkoutCard key={w.id} w={w} />
+        ))}
       </div>
     </div>
   );
